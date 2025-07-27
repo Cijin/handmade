@@ -1,17 +1,41 @@
-pub fn main() !void {
-    // Prints to stderr (it's a shortcut based on `std.io.getStdErr()`)
-    std.debug.print("All your {s} are belong to us.\n", .{"codebase"});
-
-    // stdout is for the actual output of your application, for example if you
-    // are implementing gzip, then only the compressed bytes should be sent to
-    // stdout, not any debugging messages.
-    const stdout_file = std.io.getStdOut().writer();
-    var bw = std.io.bufferedWriter(stdout_file);
-    const stdout = bw.writer();
-
-    try stdout.print("Run `zig build test` to run the tests.\n", .{});
-
-    try bw.flush(); // Don't forget to flush!
-}
-
 const std = @import("std");
+const sdl = @cImport({
+    @cInclude("SDL3/SDL.h");
+    @cInclude("SDL3/SDL_main.h");
+});
+
+const width = 800;
+const height = 600;
+
+pub fn main() !u8 {
+    var done = false;
+
+    const meta_data_set = sdl.SDL_SetAppMetadata("Handmade", "0.0.1", "handmade");
+    if (!meta_data_set) {
+        std.debug.print("Failed to set meta_data. Error:{s}\n", .{sdl.SDL_GetError()});
+    }
+
+    const sdl_init = sdl.SDL_Init(sdl.SDL_INIT_AUDIO | sdl.SDL_INIT_VIDEO);
+    if (!sdl_init) {
+        std.debug.print("Failed to set init sdl. Error:{s}\n", .{sdl.SDL_GetError()});
+    }
+    defer sdl.SDL_Quit();
+
+    const window = sdl.SDL_CreateWindow("Handmade", width, height, sdl.SDL_WINDOW_RESIZABLE) orelse {
+        std.debug.print("Failed to create window. Error:{s}\n", .{sdl.SDL_GetError()});
+        return 1;
+    };
+    defer sdl.SDL_DestroyWindow(window);
+
+    while (!done) {
+        var event: sdl.SDL_Event = undefined;
+
+        while (sdl.SDL_PollEvent(&event)) {
+            if (event.type == sdl.SDL_EVENT_QUIT) {
+                done = true;
+            }
+        }
+    }
+
+    return 0;
+}
