@@ -2,12 +2,15 @@ const std = @import("std");
 const sdl = @cImport({
     @cInclude("SDL3/SDL.h");
     @cInclude("SDL3/SDL_main.h");
+    @cInclude("SDL3/SDL_video.h");
 });
 
-const width = 800;
-const height = 600;
+const WIDTH = 640;
+const HEIGHT = 480;
 
 pub fn main() !u8 {
+    var window: ?*sdl.SDL_Window = null;
+    var renderer: ?*sdl.SDL_Renderer = null;
     var done = false;
 
     const meta_data_set = sdl.SDL_SetAppMetadata("Handmade", "0.0.1", "handmade");
@@ -21,20 +24,42 @@ pub fn main() !u8 {
     }
     defer sdl.SDL_Quit();
 
-    const window = sdl.SDL_CreateWindow("Handmade", width, height, sdl.SDL_WINDOW_RESIZABLE) orelse {
-        std.debug.print("Failed to create window. Error:{s}\n", .{sdl.SDL_GetError()});
+    if (!sdl.SDL_CreateWindowAndRenderer("Handmade Hero Window", WIDTH, HEIGHT, 0, &window, &renderer)) {
+        std.debug.print("Failed to create window or renderer. Err:{s}\n", .{sdl.SDL_GetError()});
         return 1;
-    };
-    defer sdl.SDL_DestroyWindow(window);
+    }
+
+    defer {
+        if (window) |w| {
+            sdl.SDL_DestroyWindow(w);
+        }
+
+        if (renderer) |r| {
+            sdl.SDL_DestroyRenderer(r);
+        }
+    }
 
     while (!done) {
         var event: sdl.SDL_Event = undefined;
-
         while (sdl.SDL_PollEvent(&event)) {
             if (event.type == sdl.SDL_EVENT_QUIT) {
                 done = true;
             }
         }
+
+        _ = sdl.SDL_SetRenderDrawColorFloat(renderer, 0.0, 0.0, 0.0, sdl.SDL_ALPHA_OPAQUE_FLOAT);
+        _ = sdl.SDL_RenderClear(renderer);
+
+        _ = sdl.SDL_SetRenderDrawColorFloat(renderer, 1.0, 0.0, 0.0, sdl.SDL_ALPHA_OPAQUE_FLOAT);
+        const rect = sdl.SDL_FRect{
+            .x = 100,
+            .y = 100,
+            .w = 200,
+            .h = 150,
+        };
+        _ = sdl.SDL_RenderFillRect(renderer, &rect);
+
+        _ = sdl.SDL_RenderPresent(renderer);
     }
 
     return 0;
