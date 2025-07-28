@@ -50,15 +50,6 @@ pub fn main() !u8 {
         _ = sdl.SDL_SetRenderDrawColorFloat(renderer, 0.0, 0.0, 0.0, sdl.SDL_ALPHA_OPAQUE_FLOAT);
         _ = sdl.SDL_RenderClear(renderer);
 
-        _ = sdl.SDL_SetRenderDrawColorFloat(renderer, 1.0, 0.0, 0.0, sdl.SDL_ALPHA_OPAQUE_FLOAT);
-        const rect = sdl.SDL_FRect{
-            .x = 100,
-            .y = 100,
-            .w = 200,
-            .h = 150,
-        };
-        _ = sdl.SDL_RenderFillRect(renderer, &rect);
-
         _ = sdl.SDL_RenderPresent(renderer);
     }
 
