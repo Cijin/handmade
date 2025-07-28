@@ -33,13 +33,8 @@ pub fn build(b: *std.Build) void {
         .root_module = exe_mod,
     });
 
-    const sdl_dep = b.dependency("sdl", .{
-        .target = target,
-        .optimize = optimize,
-    });
-    const sdl_lib = sdl_dep.artifact("SDL3");
-
-    exe.linkLibrary(sdl_lib);
+    exe.linkSystemLibrary("gtk4");
+    exe.linkLibC();
 
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
