@@ -1,57 +1,24 @@
 const std = @import("std");
-const sdl = @cImport({
-    @cInclude("SDL3/SDL.h");
-    @cInclude("SDL3/SDL_main.h");
-    @cInclude("SDL3/SDL_video.h");
+const c = @cImport({
+    @cInclude("gtk/gtk.h");
 });
 
-const WIDTH = 640;
+const WIDTH = 600;
 const HEIGHT = 480;
 
-pub fn main() !u8 {
-    var window: ?*sdl.SDL_Window = null;
-    var renderer: ?*sdl.SDL_Renderer = null;
-    var done = false;
+pub fn activate(app: *c.GtkApplication, user_data: c.gpointer) callconv(.C) void {
+    _ = user_data;
 
-    const meta_data_set = sdl.SDL_SetAppMetadata("Handmade", "0.0.1", "handmade");
-    if (!meta_data_set) {
-        std.debug.print("Failed to set meta_data. Error:{s}\n", .{sdl.SDL_GetError()});
-    }
+    const window = c.gtk_application_window_new(app);
+    c.gtk_window_set_title(@as(*c.GtkWindow, @ptrCast(window)), "Handmade Hero");
+    c.gtk_window_set_default_size(@as(*c.GtkWindow, @ptrCast(window)), WIDTH, HEIGHT);
+    c.gtk_window_present(@as(*c.GtkWindow, @ptrCast(window)));
+}
 
-    const sdl_init = sdl.SDL_Init(sdl.SDL_INIT_AUDIO | sdl.SDL_INIT_VIDEO);
-    if (!sdl_init) {
-        std.debug.print("Failed to set init sdl. Error:{s}\n", .{sdl.SDL_GetError()});
-    }
-    defer sdl.SDL_Quit();
+pub fn main() !void {
+    const app = c.gtk_application_new("handmade.hero.zig", 0);
+    defer c.g_object_unref(app);
 
-    if (!sdl.SDL_CreateWindowAndRenderer("Handmade Hero Window", WIDTH, HEIGHT, 0, &window, &renderer)) {
-        std.debug.print("Failed to create window or renderer. Err:{s}\n", .{sdl.SDL_GetError()});
-        return 1;
-    }
-
-    defer {
-        if (window) |w| {
-            sdl.SDL_DestroyWindow(w);
-        }
-
-        if (renderer) |r| {
-            sdl.SDL_DestroyRenderer(r);
-        }
-    }
-
-    while (!done) {
-        var event: sdl.SDL_Event = undefined;
-        while (sdl.SDL_PollEvent(&event)) {
-            if (event.type == sdl.SDL_EVENT_QUIT) {
-                done = true;
-            }
-        }
-
-        _ = sdl.SDL_SetRenderDrawColorFloat(renderer, 0.0, 0.0, 0.0, sdl.SDL_ALPHA_OPAQUE_FLOAT);
-        _ = sdl.SDL_RenderClear(renderer);
-
-        _ = sdl.SDL_RenderPresent(renderer);
-    }
-
-    return 0;
+    _ = c.g_signal_connect_data(app, "activate", @as(c.GCallback, @ptrCast(&activate)), null, null, 0);
+    _ = c.g_application_run(@as(*c.GApplication, @ptrCast(app)), 0, null);
 }
