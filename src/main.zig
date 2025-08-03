@@ -1,53 +1,65 @@
 const std = @import("std");
 const c = @cImport({
-    @cInclude("gtk/gtk.h");
+    @cInclude("X11/Xlib.h");
+    @cInclude("X11/Xutil.h");
 });
 
-const WIDTH = 600;
-const HEIGHT = 480;
+const Width = 600;
+const Height = 480;
+const WindowName: c_char = "Yellow";
+const IconName = "X Window";
 
-pub fn shutdown(_: *c.GtkApplication, _: c.gpointer) callconv(.C) void {
-    // Todo: for later use
-    std.debug.print("shutdown\n", .{});
-}
+pub fn main() !u8 {
+    // On a POSIX-conformant system, if the display_name is NULL, it defaults to the value of the DISPLAY environment variable.
+    const display = c.XOpenDisplay(null) orelse {
+        std.debug.print("failed to open display", .{});
 
-pub fn activate(app: *c.GtkApplication, _: c.gpointer) callconv(.C) void {
-    const window = c.gtk_application_window_new(app);
-    const window_cast: *c.GtkWindow = @ptrCast(window);
+        return 1;
+    };
+    defer c.XCloseDisplay(display);
 
-    c.gtk_window_set_title(@as(*c.GtkWindow, @ptrCast(window)), "Handmade Hero");
-    c.gtk_window_set_default_size(window_cast, WIDTH, HEIGHT);
+    const screen = c.XDefaultScreen(display);
+    const display_width = c.XDisplayWidth(display, screen);
+    const display_height = c.XDisplayHeight(display, screen);
 
-    const header = c.gtk_header_bar_new();
-    c.gtk_header_bar_set_title_widget(@as(*c.GtkHeaderBar, @ptrCast(header)), c.gtk_label_new("Handmade Hero"));
-    c.gtk_window_set_titlebar(window_cast, header);
+    const x: u16 = 0;
+    const y: u16 = 0;
+    const f: c_int = 3;
+    const w = @divTrunc(display_width, f);
+    const h = @divTrunc(display_height, f);
+    const border_width: c_uint = 0;
 
-    c.gtk_window_present(@as(*c.GtkWindow, @ptrCast(window)));
-}
-
-pub fn main() !void {
-    const app = c.gtk_application_new("handmade.hero.zig", 0);
-    defer c.g_object_unref(app);
-
-    const activate_handler_id = c.g_signal_connect_data(
-        app,
-        "activate",
-        @as(c.GCallback, @ptrCast(&activate)),
-        null,
-        null,
-        0,
+    const window_parent = c.XRootWindow(display, screen);
+    const window = c.XCreateSimpleWindow(
+        display,
+        window_parent,
+        x,
+        y,
+        @intCast(w),
+        @intCast(h),
+        border_width,
+        c.XBlackPixel(display, screen),
+        c.XWhitePixel(display, screen),
     );
-    defer c.g_signal_handler_disconnect(app, activate_handler_id);
+    defer c.XDestroyWindow(display, window);
 
-    const shutdown_handler_id = c.g_signal_connect_data(
-        app,
-        "shutdown",
-        @as(c.GCallback, @ptrCast(&shutdown)),
-        null,
-        null,
-        0,
-    );
-    defer c.g_signal_handler_disconnect(app, shutdown_handler_id);
+    var window_name: c.XTextProperty = undefined;
+    var icon_name: c.XTextProperty = undefined;
+    if (c.XStringListToTextProperty(WindowName, 1, &window_name) == 0) {
+        std.debug.print("structure allocation failed for window name", .{});
 
-    _ = c.g_application_run(@as(*c.GApplication, @ptrCast(app)), 0, null);
+        return 1;
+    }
+
+    if (c.XStringListToTextProperty(&IconName, 1, &icon_name) == 0) {
+        std.debug.print("structure allocation failed for window name", .{});
+
+        return 1;
+    }
+
+    _ = c.XMapWindow(display, window);
+
+    while (true) {}
+
+    return 0;
 }

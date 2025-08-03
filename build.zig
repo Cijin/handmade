@@ -33,7 +33,7 @@ pub fn build(b: *std.Build) void {
         .root_module = exe_mod,
     });
 
-    exe.linkSystemLibrary("gtk4");
+    exe.linkSystemLibrary("X11");
     exe.linkLibC();
 
     // This declares intent for the executable to be installed into the
