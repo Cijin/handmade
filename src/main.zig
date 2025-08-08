@@ -3,10 +3,51 @@ const c = @cImport({
     @cInclude("X11/Xlib.h");
 });
 
-const Width = 600;
-const Height = 480;
+var Height: usize = 480;
+var Width: usize = 600;
+
+fn redraw(arena: *std.heap.ArenaAllocator, display: ?*c.Display, window: c.Window, gc: c.GC) void {
+    var wa: c.XWindowAttributes = undefined;
+    _ = c.XGetWindowAttributes(display, window, &wa);
+
+    const bytes_per_pixel = @sizeOf(u32);
+    const size: usize = Height * Width * bytes_per_pixel;
+
+    // always true
+    _ = arena.reset(.free_all);
+
+    var pixels = arena.allocator().alloc(u32, size) catch unreachable;
+
+    var pixel_idx: usize = 0;
+    for (0..Height) |y| {
+        pixel_idx = y * Width;
+
+        for (0..Width) |x| {
+            pixels[pixel_idx + x] = @intCast(x * y);
+        }
+    }
+
+    var image = arena.allocator().create(c.XImage) catch unreachable;
+    image = c.XCreateImage(
+        display,
+        wa.visual,
+        @intCast(wa.depth),
+        c.ZPixmap,
+        0,
+        @ptrCast(pixels),
+        @intCast(Width),
+        @intCast(Height),
+        32,
+        0,
+    );
+
+    _ = c.XPutImage(display, window, gc, image, 0, 0, 0, 0, @intCast(image.width), @intCast(image.height));
+}
 
 pub fn main() !u8 {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+
     // On a POSIX-conformant system, if the display_name is NULL, it defaults to the value of the DISPLAY environment variable.
     const display = c.XOpenDisplay(null) orelse {
         std.debug.print("failed to open display", .{});
@@ -23,12 +64,14 @@ pub fn main() !u8 {
         window_parent,
         0,
         0,
-        Width,
-        Height,
+        @intCast(Width),
+        @intCast(Height),
         0,
         c.XBlackPixel(display, screen),
-        c.XWhitePixel(display, screen),
+        c.XBlackPixel(display, screen),
     );
+
+    const gc = c.XCreateGC(display, window, 0, null);
 
     var delete_atom: c.Atom = undefined;
     delete_atom = c.XInternAtom(display, "WM_DELETE_WINDOW", 0);
@@ -41,7 +84,7 @@ pub fn main() !u8 {
     _ = c.XStoreName(display, window, "Handmade");
 
     // you will not get events without this
-    _ = c.XSelectInput(display, window, c.KeyPressMask);
+    _ = c.XSelectInput(display, window, c.KeyPressMask | c.StructureNotifyMask);
 
     _ = c.XMapWindow(display, window);
 
@@ -55,6 +98,8 @@ pub fn main() !u8 {
             _ = c.XNextEvent(display, &event);
             switch (event.type) {
                 c.KeyPress => std.debug.print("Key pressed, not sure which one.\n", .{}),
+                // Todo: handle window destroyed or prematurely closed
+                // so that it can be restarted if it was unintended
                 c.ClientMessage => {
                     if (event.xclient.data.l[0] == delete_atom) {
                         std.debug.print("Closing window.\n", .{});
@@ -62,9 +107,17 @@ pub fn main() !u8 {
                         break;
                     }
                 },
+                c.ConfigureNotify => {
+                    Height = @intCast(event.xconfigure.height);
+                    Width = @intCast(event.xconfigure.width);
+
+                    redraw(&arena, display, window, gc);
+                },
                 else => continue,
             }
         }
+
+        redraw(&arena, display, window, gc);
     }
 
     return 0;
