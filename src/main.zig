@@ -1,52 +1,71 @@
 const std = @import("std");
 const c = @cImport({
     @cInclude("X11/Xlib.h");
+    @cInclude("X11/keysym.h");
 });
 
-var Height: usize = 480;
-var Width: usize = 600;
+// Todo: seperate out window and buffer width
+const X11BackBuffer = struct {
+    width: u32,
+    height: u32,
+    memory: []u32,
+    bytes_per_pixel: u8,
+};
 
-fn redraw(arena: *std.heap.ArenaAllocator, display: ?*c.Display, window: c.Window, gc: c.GC) void {
+var GlobalBackBuffer: X11BackBuffer = undefined;
+
+fn get_memory_size(buffer: X11BackBuffer) usize {
+    return buffer.width * buffer.height * buffer.bytes_per_pixel;
+}
+
+fn resize_memory(buffer: *X11BackBuffer, arena: *std.heap.ArenaAllocator) void {
+    // Todo: re-calculate the aspect ratio and stretch image onto window
+    _ = arena.reset(.free_all);
+
+    // Todo: handle this at some point?
+    buffer.memory = arena.allocator().alloc(u32, get_memory_size(buffer.*)) catch unreachable;
+}
+
+fn redraw(buffer: *X11BackBuffer, display: ?*c.Display, window: c.Window, gc: c.GC) void {
     var wa: c.XWindowAttributes = undefined;
     _ = c.XGetWindowAttributes(display, window, &wa);
 
-    const bytes_per_pixel = @sizeOf(u32);
-    const size: usize = Height * Width * bytes_per_pixel;
-
-    // always true
-    _ = arena.reset(.free_all);
-
-    var pixels = arena.allocator().alloc(u32, size) catch unreachable;
+    @memset(buffer.memory, 0);
 
     var pixel_idx: usize = 0;
-    for (0..Height) |y| {
-        pixel_idx = y * Width;
+    for (0..buffer.height) |y| {
+        pixel_idx = y * buffer.width;
 
-        for (0..Width) |x| {
-            pixels[pixel_idx + x] = @intCast(x * y);
+        for (0..buffer.width) |x| {
+            buffer.memory[pixel_idx + x] = @intCast(x * y);
         }
     }
 
-    var image = arena.allocator().create(c.XImage) catch unreachable;
-    image = c.XCreateImage(
+    const image = c.XCreateImage(
         display,
         wa.visual,
         @intCast(wa.depth),
         c.ZPixmap,
         0,
-        @ptrCast(pixels),
-        @intCast(Width),
-        @intCast(Height),
+        @ptrCast(buffer.memory),
+        @intCast(buffer.width),
+        @intCast(buffer.height),
         32,
         0,
     );
 
-    _ = c.XPutImage(display, window, gc, image, 0, 0, 0, 0, @intCast(image.width), @intCast(image.height));
+    _ = c.XPutImage(display, window, gc, image, 0, 0, 0, 0, @intCast(buffer.width), @intCast(buffer.height));
 }
 
 pub fn main() !u8 {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
+
+    GlobalBackBuffer.width = 600;
+    GlobalBackBuffer.height = 480;
+    GlobalBackBuffer.bytes_per_pixel = @sizeOf(u32);
+
+    GlobalBackBuffer.memory = arena.allocator().alloc(u32, get_memory_size(GlobalBackBuffer)) catch unreachable;
 
     // On a POSIX-conformant system, if the display_name is NULL, it defaults to the value of the DISPLAY environment variable.
     const display = c.XOpenDisplay(null) orelse {
@@ -64,8 +83,8 @@ pub fn main() !u8 {
         window_parent,
         0,
         0,
-        @intCast(Width),
-        @intCast(Height),
+        @intCast(GlobalBackBuffer.width),
+        @intCast(GlobalBackBuffer.height),
         0,
         c.XBlackPixel(display, screen),
         c.XBlackPixel(display, screen),
@@ -97,7 +116,22 @@ pub fn main() !u8 {
         while (c.XPending(display) > 0) {
             _ = c.XNextEvent(display, &event);
             switch (event.type) {
-                c.KeyPress => std.debug.print("Key pressed, not sure which one.\n", .{}),
+                c.KeyPress => {
+                    const keysym = c.XLookupKeysym(&event.xkey, 0);
+                    switch (keysym) {
+                        c.XK_W => {},
+                        c.XK_A => {},
+                        c.XK_S => {},
+                        c.XK_D => {},
+                        c.XK_F => {},
+                        c.XK_space => {},
+                        c.XK_Escape => {},
+                        else => {},
+                    }
+                },
+                c.KeyRelease => {
+                    // Todo: not sure what to do with this at this point
+                },
                 // Todo: handle window destroyed or prematurely closed
                 // so that it can be restarted if it was unintended
                 c.ClientMessage => {
@@ -108,16 +142,18 @@ pub fn main() !u8 {
                     }
                 },
                 c.ConfigureNotify => {
-                    Height = @intCast(event.xconfigure.height);
-                    Width = @intCast(event.xconfigure.width);
+                    GlobalBackBuffer.height = @intCast(event.xconfigure.height);
+                    GlobalBackBuffer.width = @intCast(event.xconfigure.width);
 
-                    redraw(&arena, display, window, gc);
+                    resize_memory(&GlobalBackBuffer, &arena);
+
+                    redraw(&GlobalBackBuffer, display, window, gc);
                 },
                 else => continue,
             }
         }
 
-        redraw(&arena, display, window, gc);
+        redraw(&GlobalBackBuffer, display, window, gc);
     }
 
     return 0;
