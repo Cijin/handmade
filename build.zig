@@ -34,6 +34,7 @@ pub fn build(b: *std.Build) void {
     });
 
     exe.linkSystemLibrary("X11");
+    exe.linkSystemLibrary("pulse-simple");
     exe.linkLibC();
 
     // This declares intent for the executable to be installed into the
