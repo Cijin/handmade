@@ -1,10 +1,20 @@
 const std = @import("std");
+const time = std.time;
+const math = std.math;
 const c = @cImport({
     @cInclude("X11/Xlib.h");
     @cInclude("X11/keysym.h");
-    @cInclude("pulse/simple.h");
+    @cInclude("pulse/mainloop.h");
+    @cInclude("pulse/context.h");
+    @cInclude("pulse/stream.h");
     @cInclude("pulse/error.h");
 });
+
+// 27 Aug: Todo:
+// Async sound
+// RTDSC
+// Refactor sound data to struct
+// Move sound buffer (secondary buffer) into window struct
 
 // Todo: seperate out window and buffer width
 const X11BackBuffer = struct {
@@ -14,37 +24,61 @@ const X11BackBuffer = struct {
     bytes_per_pixel: u8,
 };
 
-const SampleRate: u32 = 48000;
+const SampleRate: f32 = 48000;
 const Channels: u8 = 2;
-const SoundBufferSize = SampleRate * 2;
-const Hz = 256;
-const Period = (SampleRate / Hz) / 2;
+const SoundBufferSize: usize = SampleRate * Channels * @sizeOf(i16);
+const Hz: f32 = 256;
+const Period: f32 = SampleRate / Hz;
 
-var SoundBuffer: [SoundBufferSize]i16 = undefined;
+var SoundBuffer: ?*anyopaque = null;
 var GlobalBackBuffer: X11BackBuffer = undefined;
 
 pub fn main() !u8 {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
 
+    const main_loop = c.pa_mainloop_new();
+    const main_loop_api = c.pa_mainloop_get_api(main_loop);
+    const pa_context = c.pa_context_new(main_loop_api, "handmade");
+    const context_connected = c.pa_context_connect(pa_context, null, 0, null);
+    if (context_connected != 0) {
+        std.debug.print("Context connect failed\n", .{});
+        return 1;
+    }
+
     var sample_spec = c.struct_pa_sample_spec{
         .format = c.PA_SAMPLE_S16NE,
         .channels = Channels,
         .rate = SampleRate,
     };
+    const pa_stream = c.pa_stream_new(pa_context, "handmade-stream", &sample_spec, null);
 
-    // Todo: replace with async?
-    _ = c.pa_simple_new(
+    // Todo: c.pa_stream_set_state_callback(pa_stream, stream_state_callback, null);
+
+    const playback_connected = c.pa_stream_connect_playback(
+        pa_stream,
         null,
-        "handmade",
-        c.PA_STREAM_PLAYBACK,
         null,
-        "game",
-        &sample_spec,
-        null,
+        c.PA_STREAM_START_MUTED,
         null,
         null,
     );
+    if (playback_connected > 0) {
+        std.debug.print("Playback connect failed\n", .{});
+        return 1;
+    }
+
+    const stream_state = c.pa_stream_get_state(pa_stream);
+    std.debug.print("Stream state {d}\n", .{stream_state});
+
+    //const playback_write_ready = c.pa_stream_begin_write(pa_stream, &SoundBuffer, @constCast(@ptrCast(&SoundBufferSize)));
+    //if (SoundBuffer) |_| {
+    //    std.debug.print("Playback write ready\n", .{});
+    //    return 1;
+    //} else {
+    //    std.debug.print("Playback write not ready: {s}\n", .{c.pa_strerror(playback_write_ready)});
+    //    return 1;
+    //}
 
     GlobalBackBuffer.width = 600;
     GlobalBackBuffer.height = 480;
@@ -96,8 +130,15 @@ pub fn main() !u8 {
     // window will not show up without sync
     _ = c.XSync(display, 0);
 
+    // Todo: make this async and run during re-draw within loop
+    //play_audio(audio_handle);
+
     var quit = false;
     var event: c.XEvent = undefined;
+    var start_time = time.milliTimestamp();
+    var fps: i64 = 0;
+    var time_per_frame: i64 = 0;
+    var end_time: i64 = 0;
     while (!quit) {
         while (c.XPending(display) > 0) {
             _ = c.XNextEvent(display, &event);
@@ -140,26 +181,42 @@ pub fn main() !u8 {
         }
 
         redraw(&GlobalBackBuffer, display, window, gc);
+
+        // Todo: RDTSC() to get cycles/frame
+        end_time = time.milliTimestamp();
+        time_per_frame = end_time - start_time;
+        if (time_per_frame != 0) {
+            fps = @divFloor(1000, time_per_frame);
+        }
+        std.debug.print("MsPerFrame: {d}\t FPS: {d}\n", .{ time_per_frame, fps });
+
+        start_time = end_time;
     }
 
     return 0;
 }
 
 fn play_audio(server: ?*c.struct_pa_simple) void {
-    var wave_pos: u32 = 0;
-    var audio: i16 = 1000;
+    var wave_pos: f32 = 0;
+    var t: f32 = 0;
+    const volume: f32 = 8000;
+    var tone_volume: i16 = @intFromFloat(volume);
     var i: usize = 0;
     while (i < SoundBufferSize) : (i += 2) {
         if (wave_pos == Period) {
             wave_pos = 0;
-            audio = -audio;
         }
 
-        SoundBuffer[i] = audio;
-        SoundBuffer[i + 1] = audio;
+        t = 2 * math.pi * (wave_pos / Period);
+        const sine_t = @sin(t) * volume;
+        tone_volume = @intFromFloat(sine_t);
+
+        SoundBuffer[i] = tone_volume;
+        SoundBuffer[i + 1] = tone_volume;
         wave_pos += 1;
     }
 
+    // Todo: this method blocks, use a async one instead
     _ = c.pa_simple_write(server, @ptrCast(SoundBuffer[0..]), SoundBufferSize * @sizeOf(i16), null);
 }
 
