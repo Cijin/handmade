@@ -21,70 +21,104 @@ const X11BackBuffer = struct {
     width: u32,
     height: u32,
     memory: []u32,
+    sound: []i16,
     bytes_per_pixel: u8,
 };
 
+var SoundStream: ?*c.pa_stream = null;
+var MainLoopReturnVal: c_int = 0;
+var SoundMainLoop: ?*c.pa_mainloop = null;
 const SampleRate: f32 = 48000;
 const Channels: u8 = 2;
-const SoundBufferSize: usize = SampleRate * Channels * @sizeOf(i16);
+const SoundBufferSize: usize = SampleRate * Channels;
+const SoundBufferSizeBytes: usize = SampleRate * Channels * @sizeOf(i16);
 const Hz: f32 = 256;
 const Period: f32 = SampleRate / Hz;
 
-var SoundBuffer: ?*anyopaque = null;
 var GlobalBackBuffer: X11BackBuffer = undefined;
+
+fn context_state_callback(context: ?*c.pa_context, _: ?*anyopaque) callconv(.C) void {
+    const state = c.pa_context_get_state(context);
+
+    switch (state) {
+        c.PA_CONTEXT_READY => {
+            var sample_spec = c.struct_pa_sample_spec{
+                .format = c.PA_SAMPLE_S16NE,
+                .channels = Channels,
+                .rate = SampleRate,
+            };
+            SoundStream = c.pa_stream_new(context, "handmade-stream", &sample_spec, null);
+
+            c.pa_stream_set_state_callback(SoundStream, stream_state_callback, null);
+            const playback_connected = c.pa_stream_connect_playback(
+                SoundStream,
+                null,
+                null,
+                c.PA_STREAM_START_MUTED,
+                null,
+                null,
+            );
+            if (playback_connected > 0) {
+                std.debug.print("Playback connect failed\n", .{});
+            }
+        },
+        c.PA_CONTEXT_TERMINATED, c.PA_CONTEXT_FAILED => {
+            std.debug.print("Context failed\n", .{});
+        },
+        else => {},
+    }
+}
+
+fn stream_state_callback(stream: ?*c.pa_stream, _: ?*anyopaque) callconv(.C) void {
+    const state = c.pa_stream_get_state(stream);
+
+    switch (state) {
+        c.PA_STREAM_READY => {
+            std.debug.print("Stream is ready for writing\n", .{});
+            c.pa_mainloop_quit(SoundMainLoop, MainLoopReturnVal);
+
+            // Todo: (FIX-ME)memory map permission error
+            const playback_write_ready = c.pa_stream_begin_write(
+                SoundStream,
+                @ptrCast(&GlobalBackBuffer.sound),
+                @constCast(@ptrCast(&SoundBufferSize)),
+            );
+            if (playback_write_ready > 0) {
+                std.debug.print("Playback write not ready: {s}\n", .{c.pa_strerror(playback_write_ready)});
+                return;
+            }
+        },
+        c.PA_STREAM_FAILED, c.PA_STREAM_TERMINATED => {
+            std.debug.print("Stream failed\n", .{});
+        },
+        else => {},
+    }
+}
 
 pub fn main() !u8 {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
-
-    const main_loop = c.pa_mainloop_new();
-    const main_loop_api = c.pa_mainloop_get_api(main_loop);
-    const pa_context = c.pa_context_new(main_loop_api, "handmade");
-    const context_connected = c.pa_context_connect(pa_context, null, 0, null);
-    if (context_connected != 0) {
-        std.debug.print("Context connect failed\n", .{});
-        return 1;
-    }
-
-    var sample_spec = c.struct_pa_sample_spec{
-        .format = c.PA_SAMPLE_S16NE,
-        .channels = Channels,
-        .rate = SampleRate,
-    };
-    const pa_stream = c.pa_stream_new(pa_context, "handmade-stream", &sample_spec, null);
-
-    // Todo: c.pa_stream_set_state_callback(pa_stream, stream_state_callback, null);
-
-    const playback_connected = c.pa_stream_connect_playback(
-        pa_stream,
-        null,
-        null,
-        c.PA_STREAM_START_MUTED,
-        null,
-        null,
-    );
-    if (playback_connected > 0) {
-        std.debug.print("Playback connect failed\n", .{});
-        return 1;
-    }
-
-    const stream_state = c.pa_stream_get_state(pa_stream);
-    std.debug.print("Stream state {d}\n", .{stream_state});
-
-    //const playback_write_ready = c.pa_stream_begin_write(pa_stream, &SoundBuffer, @constCast(@ptrCast(&SoundBufferSize)));
-    //if (SoundBuffer) |_| {
-    //    std.debug.print("Playback write ready\n", .{});
-    //    return 1;
-    //} else {
-    //    std.debug.print("Playback write not ready: {s}\n", .{c.pa_strerror(playback_write_ready)});
-    //    return 1;
-    //}
 
     GlobalBackBuffer.width = 600;
     GlobalBackBuffer.height = 480;
     GlobalBackBuffer.bytes_per_pixel = @sizeOf(u32);
 
     GlobalBackBuffer.memory = arena.allocator().alloc(u32, get_memory_size(GlobalBackBuffer)) catch unreachable;
+    GlobalBackBuffer.sound = arena.allocator().alloc(i16, SoundBufferSize) catch unreachable;
+
+    SoundMainLoop = c.pa_mainloop_new();
+    const main_loop_api = c.pa_mainloop_get_api(SoundMainLoop);
+    const pa_context = c.pa_context_new(main_loop_api, "handmade");
+
+    c.pa_context_set_state_callback(pa_context, context_state_callback, null);
+
+    const context_connected = c.pa_context_connect(pa_context, null, 0, null);
+    if (context_connected != 0) {
+        std.debug.print("Context connection attempt failed\n", .{});
+        return 1;
+    }
+
+    _ = c.pa_mainloop_run(SoundMainLoop, &MainLoopReturnVal);
 
     // Todo: bind to WM?
     // On a POSIX-conformant system, if the display_name is NULL, it defaults to the value of the DISPLAY environment variable.
@@ -188,7 +222,7 @@ pub fn main() !u8 {
         if (time_per_frame != 0) {
             fps = @divFloor(1000, time_per_frame);
         }
-        std.debug.print("MsPerFrame: {d}\t FPS: {d}\n", .{ time_per_frame, fps });
+        //std.debug.print("MsPerFrame: {d}\t FPS: {d}\n", .{ time_per_frame, fps });
 
         start_time = end_time;
     }
@@ -211,13 +245,13 @@ fn play_audio(server: ?*c.struct_pa_simple) void {
         const sine_t = @sin(t) * volume;
         tone_volume = @intFromFloat(sine_t);
 
-        SoundBuffer[i] = tone_volume;
-        SoundBuffer[i + 1] = tone_volume;
+        GlobalBackBuffer.sound[i] = tone_volume;
+        GlobalBackBuffer.sound[i + 1] = tone_volume;
         wave_pos += 1;
     }
 
     // Todo: this method blocks, use a async one instead
-    _ = c.pa_simple_write(server, @ptrCast(SoundBuffer[0..]), SoundBufferSize * @sizeOf(i16), null);
+    _ = c.pa_simple_write(server, @ptrCast(GlobalBackBuffer.sound), SoundBufferSize * @sizeOf(i16), null);
 }
 
 fn get_memory_size(buffer: X11BackBuffer) usize {
