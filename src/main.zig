@@ -4,9 +4,7 @@ const math = std.math;
 const c = @cImport({
     @cInclude("X11/Xlib.h");
     @cInclude("X11/keysym.h");
-    @cInclude("pulse/mainloop.h");
-    @cInclude("pulse/context.h");
-    @cInclude("pulse/stream.h");
+    @cInclude("pulse/simple.h");
     @cInclude("pulse/error.h");
 });
 
@@ -17,7 +15,7 @@ const c = @cImport({
 // Move sound buffer (secondary buffer) into window struct
 
 // Todo: seperate out window and buffer width
-const X11BackBuffer = struct {
+const BackBuffer = struct {
     width: u32,
     height: u32,
     memory: []u32,
@@ -34,7 +32,7 @@ const SoundBufferSize: usize = SampleRate * Channels;
 const Hz: f32 = 256;
 const Period: f32 = SampleRate / Hz;
 
-var GlobalBackBuffer: X11BackBuffer = undefined;
+var GlobalBackBuffer: BackBuffer = undefined;
 
 pub fn main() !u8 {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -45,6 +43,25 @@ pub fn main() !u8 {
     GlobalBackBuffer.bytes_per_pixel = @sizeOf(u32);
 
     GlobalBackBuffer.memory = arena.allocator().alloc(u32, get_memory_size(GlobalBackBuffer)) catch unreachable;
+    GlobalBackBuffer.sound = arena.allocator().alloc(i16, SoundBufferSize) catch unreachable;
+
+    var sample_spec = c.struct_pa_sample_spec{
+        .format = c.PA_SAMPLE_S16NE,
+        .channels = Channels,
+        .rate = SampleRate,
+    };
+
+    const audio_handle = c.pa_simple_new(
+        null,
+        "handmade",
+        c.PA_STREAM_PLAYBACK,
+        null,
+        "game",
+        &sample_spec,
+        null,
+        null,
+        null,
+    );
 
     // Todo: bind to WM?
     // On a POSIX-conformant system, if the display_name is NULL, it defaults to the value of the DISPLAY environment variable.
@@ -91,7 +108,7 @@ pub fn main() !u8 {
     _ = c.XSync(display, 0);
 
     // Todo: make this async and run during re-draw within loop
-    //play_audio(audio_handle);
+    play_audio(audio_handle, &GlobalBackBuffer);
 
     var quit = false;
     var event: c.XEvent = undefined;
@@ -156,14 +173,14 @@ pub fn main() !u8 {
     return 0;
 }
 
-fn play_audio(server: ?*c.struct_pa_simple) void {
+fn play_audio(server: ?*c.struct_pa_simple, buffer: *BackBuffer) void {
     var wave_pos: f32 = 0;
     var t: f32 = 0;
     const volume: f32 = 8000;
     var tone_volume: i16 = @intFromFloat(volume);
     var i: usize = 0;
     while (i < SoundBufferSize) : (i += 2) {
-        if (wave_pos == Period) {
+        if (wave_pos <= Period) {
             wave_pos = 0;
         }
 
@@ -171,20 +188,20 @@ fn play_audio(server: ?*c.struct_pa_simple) void {
         const sine_t = @sin(t) * volume;
         tone_volume = @intFromFloat(sine_t);
 
-        GlobalBackBuffer.sound[i] = tone_volume;
-        GlobalBackBuffer.sound[i + 1] = tone_volume;
+        buffer.sound[i] = tone_volume;
+        buffer.sound[i + 1] = tone_volume;
         wave_pos += 1;
     }
 
     // Todo: this method blocks, use a async one instead
-    _ = c.pa_simple_write(server, @ptrCast(GlobalBackBuffer.sound), SoundBufferSize * @sizeOf(i16), null);
+    _ = c.pa_simple_write(server, @ptrCast(buffer.sound), SoundBufferSize * @sizeOf(i16), null);
 }
 
-fn get_memory_size(buffer: X11BackBuffer) usize {
+fn get_memory_size(buffer: BackBuffer) usize {
     return buffer.width * buffer.height * buffer.bytes_per_pixel;
 }
 
-fn resize_memory(buffer: *X11BackBuffer, arena: *std.heap.ArenaAllocator) void {
+fn resize_memory(buffer: *BackBuffer, arena: *std.heap.ArenaAllocator) void {
     // Todo: re-calculate the aspect ratio and stretch image onto window
     _ = arena.reset(.free_all);
 
@@ -192,7 +209,7 @@ fn resize_memory(buffer: *X11BackBuffer, arena: *std.heap.ArenaAllocator) void {
     buffer.memory = arena.allocator().alloc(u32, get_memory_size(buffer.*)) catch unreachable;
 }
 
-fn redraw(buffer: *X11BackBuffer, display: ?*c.Display, window: c.Window, gc: c.GC) void {
+fn redraw(buffer: *BackBuffer, display: ?*c.Display, window: c.Window, gc: c.GC) void {
     var wa: c.XWindowAttributes = undefined;
     _ = c.XGetWindowAttributes(display, window, &wa);
 
