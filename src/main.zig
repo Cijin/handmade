@@ -9,17 +9,14 @@ const c = @cImport({
 });
 
 // 27 Aug: Todo:
-// Async sound
-// RTDSC
-// Refactor sound data to struct
-// Move sound buffer (secondary buffer) into window struct
+// RTDSC asm (after 0.15.1 update)
 
 // Todo: seperate out window and buffer width
-const BackBuffer = struct {
+const X11BackBuffer = struct {
     width: u32,
     height: u32,
     memory: []u32,
-    sound: []i16,
+    pa_memory: []i16,
     bytes_per_pixel: u8,
 };
 
@@ -32,7 +29,7 @@ const SoundBufferSize: usize = SampleRate * Channels;
 const Hz: f32 = 256;
 const Period: f32 = SampleRate / Hz;
 
-var GlobalBackBuffer: BackBuffer = undefined;
+var GlobalBackBuffer: X11BackBuffer = undefined;
 
 pub fn main() !u8 {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -43,7 +40,7 @@ pub fn main() !u8 {
     GlobalBackBuffer.bytes_per_pixel = @sizeOf(u32);
 
     GlobalBackBuffer.memory = arena.allocator().alloc(u32, get_memory_size(GlobalBackBuffer)) catch unreachable;
-    GlobalBackBuffer.sound = arena.allocator().alloc(i16, SoundBufferSize) catch unreachable;
+    GlobalBackBuffer.pa_memory = arena.allocator().alloc(i16, SoundBufferSize) catch unreachable;
 
     var sample_spec = c.struct_pa_sample_spec{
         .format = c.PA_SAMPLE_S16NE,
@@ -51,7 +48,7 @@ pub fn main() !u8 {
         .rate = SampleRate,
     };
 
-    const audio_handle = c.pa_simple_new(
+    _ = c.pa_simple_new(
         null,
         "handmade",
         c.PA_STREAM_PLAYBACK,
@@ -107,8 +104,10 @@ pub fn main() !u8 {
     // window will not show up without sync
     _ = c.XSync(display, 0);
 
-    // Todo: make this async and run during re-draw within loop
-    play_audio(audio_handle, &GlobalBackBuffer);
+    // Todo: run in a different thread (blocking operation)
+    // I forogot to close the server while testing async, so this does not work
+    // right now
+    // play_audio(audio_handle, &GlobalBackBuffer);
 
     var quit = false;
     var event: c.XEvent = undefined;
@@ -165,15 +164,15 @@ pub fn main() !u8 {
         if (time_per_frame != 0) {
             fps = @divFloor(1000, time_per_frame);
         }
-        //std.debug.print("MsPerFrame: {d}\t FPS: {d}\n", .{ time_per_frame, fps });
 
+        std.debug.print("MsPerFrame: {d}\t FPS: {d}\n", .{ time_per_frame, fps });
         start_time = end_time;
     }
 
     return 0;
 }
 
-fn play_audio(server: ?*c.struct_pa_simple, buffer: *BackBuffer) void {
+fn play_audio(server: ?*c.struct_pa_simple, buffer: *X11BackBuffer) void {
     var wave_pos: f32 = 0;
     var t: f32 = 0;
     const volume: f32 = 8000;
@@ -188,20 +187,20 @@ fn play_audio(server: ?*c.struct_pa_simple, buffer: *BackBuffer) void {
         const sine_t = @sin(t) * volume;
         tone_volume = @intFromFloat(sine_t);
 
-        buffer.sound[i] = tone_volume;
-        buffer.sound[i + 1] = tone_volume;
+        buffer.pa_memory[i] = tone_volume;
+        buffer.pa_memory[i + 1] = tone_volume;
         wave_pos += 1;
     }
 
     // Todo: this method blocks, use a async one instead
-    _ = c.pa_simple_write(server, @ptrCast(buffer.sound), SoundBufferSize * @sizeOf(i16), null);
+    _ = c.pa_simple_write(server, @ptrCast(buffer.pa_memory), SoundBufferSize * @sizeOf(i16), null);
 }
 
-fn get_memory_size(buffer: BackBuffer) usize {
+fn get_memory_size(buffer: X11BackBuffer) usize {
     return buffer.width * buffer.height * buffer.bytes_per_pixel;
 }
 
-fn resize_memory(buffer: *BackBuffer, arena: *std.heap.ArenaAllocator) void {
+fn resize_memory(buffer: *X11BackBuffer, arena: *std.heap.ArenaAllocator) void {
     // Todo: re-calculate the aspect ratio and stretch image onto window
     _ = arena.reset(.free_all);
 
@@ -209,7 +208,7 @@ fn resize_memory(buffer: *BackBuffer, arena: *std.heap.ArenaAllocator) void {
     buffer.memory = arena.allocator().alloc(u32, get_memory_size(buffer.*)) catch unreachable;
 }
 
-fn redraw(buffer: *BackBuffer, display: ?*c.Display, window: c.Window, gc: c.GC) void {
+fn redraw(buffer: *X11BackBuffer, display: ?*c.Display, window: c.Window, gc: c.GC) void {
     var wa: c.XWindowAttributes = undefined;
     _ = c.XGetWindowAttributes(display, window, &wa);
 
