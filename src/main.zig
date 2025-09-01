@@ -8,6 +8,8 @@ const c = @cImport({
     @cInclude("pulse/error.h");
 });
 
+// Todo: fix build errors post 0.15.1 update
+
 // 27 Aug: Todo:
 // RTDSC asm (after 0.15.1 update)
 
