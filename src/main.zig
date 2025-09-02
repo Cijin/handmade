@@ -1,6 +1,7 @@
 const std = @import("std");
 const time = std.time;
 const math = std.math;
+const handmade = @import("handmade.zig");
 const c = @cImport({
     @cInclude("X11/Xlib.h");
     @cInclude("X11/keysym.h");
@@ -8,41 +9,26 @@ const c = @cImport({
     @cInclude("pulse/error.h");
 });
 
-// Todo: fix build errors post 0.15.1 update
-
 // 27 Aug: Todo:
 // RTDSC asm (after 0.15.1 update)
-
-// Todo: seperate out window and buffer width
-const X11BackBuffer = struct {
-    width: u32,
-    height: u32,
-    memory: []u32,
-    pa_memory: []i16,
-    bytes_per_pixel: u8,
-};
-
-var SoundStream: ?*c.pa_stream = null;
-var MainLoopReturnVal: c_int = 0;
-var SoundMainLoop: ?*c.pa_mainloop = null;
 const SampleRate: f32 = 48000;
 const Channels: u8 = 2;
 const SoundBufferSize: usize = SampleRate * Channels;
 const Hz: f32 = 256;
 const Period: f32 = SampleRate / Hz;
 
-var GlobalBackBuffer: X11BackBuffer = undefined;
+var GlobalOffScreenBuffer: handmade.OffScreenBuffer = undefined;
 
 pub fn main() !u8 {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
 
-    GlobalBackBuffer.width = 600;
-    GlobalBackBuffer.height = 480;
-    GlobalBackBuffer.bytes_per_pixel = @sizeOf(u32);
+    GlobalOffScreenBuffer.window_width = 600;
+    GlobalOffScreenBuffer.window_height = 480;
+    GlobalOffScreenBuffer.bytes_per_pixel = @sizeOf(u32);
 
-    GlobalBackBuffer.memory = arena.allocator().alloc(u32, get_memory_size(GlobalBackBuffer)) catch unreachable;
-    GlobalBackBuffer.pa_memory = arena.allocator().alloc(i16, SoundBufferSize) catch unreachable;
+    GlobalOffScreenBuffer.memory = arena.allocator().alloc(u32, GlobalOffScreenBuffer.get_memory_size()) catch unreachable;
+    GlobalOffScreenBuffer.pa_memory = arena.allocator().alloc(i16, SoundBufferSize) catch unreachable;
 
     var sample_spec = c.struct_pa_sample_spec{
         .format = c.PA_SAMPLE_S16NE,
@@ -50,7 +36,7 @@ pub fn main() !u8 {
         .rate = SampleRate,
     };
 
-    _ = c.pa_simple_new(
+    const audio_stream = c.pa_simple_new(
         null,
         "handmade",
         c.PA_STREAM_PLAYBACK,
@@ -61,8 +47,13 @@ pub fn main() !u8 {
         null,
         null,
     );
+    defer c.pa_simple_free(audio_stream);
 
-    // Todo: bind to WM?
+    // Todo: run in a different thread (blocking operation)
+    // I forogot to close the server while testing async, so this does not work
+    // right now
+    play_audio(audio_stream, &GlobalOffScreenBuffer);
+
     // On a POSIX-conformant system, if the display_name is NULL, it defaults to the value of the DISPLAY environment variable.
     const display = c.XOpenDisplay(null) orelse {
         std.debug.print("failed to open display", .{});
@@ -79,8 +70,8 @@ pub fn main() !u8 {
         window_parent,
         0,
         0,
-        @intCast(GlobalBackBuffer.width),
-        @intCast(GlobalBackBuffer.height),
+        @intCast(GlobalOffScreenBuffer.window_width),
+        @intCast(GlobalOffScreenBuffer.window_height),
         0,
         c.XBlackPixel(display, screen),
         c.XBlackPixel(display, screen),
@@ -106,11 +97,6 @@ pub fn main() !u8 {
     // window will not show up without sync
     _ = c.XSync(display, 0);
 
-    // Todo: run in a different thread (blocking operation)
-    // I forogot to close the server while testing async, so this does not work
-    // right now
-    // play_audio(audio_handle, &GlobalBackBuffer);
-
     var quit = false;
     var event: c.XEvent = undefined;
     var start_time = time.milliTimestamp();
@@ -122,6 +108,7 @@ pub fn main() !u8 {
             _ = c.XNextEvent(display, &event);
             switch (event.type) {
                 c.KeyPress => {
+                    // Todo: send this to the renderer
                     const keysym = c.XLookupKeysym(&event.xkey, 0);
                     switch (keysym) {
                         c.XK_W => {},
@@ -135,7 +122,7 @@ pub fn main() !u8 {
                     }
                 },
                 c.KeyRelease => {
-                    // Todo: not sure what to do with this at this point
+                    // Todo: send this to renderer, maybe?
                 },
                 // Todo: handle window destroyed or prematurely closed
                 // so that it can be restarted if it was unintended
@@ -147,18 +134,18 @@ pub fn main() !u8 {
                     }
                 },
                 c.ConfigureNotify => {
-                    GlobalBackBuffer.height = @intCast(event.xconfigure.height);
-                    GlobalBackBuffer.width = @intCast(event.xconfigure.width);
+                    GlobalOffScreenBuffer.window_height = @intCast(event.xconfigure.height);
+                    GlobalOffScreenBuffer.window_width = @intCast(event.xconfigure.width);
 
-                    resize_memory(&GlobalBackBuffer, &arena);
+                    resize_memory(&GlobalOffScreenBuffer, &arena);
 
-                    redraw(&GlobalBackBuffer, display, window, gc);
+                    redraw(&GlobalOffScreenBuffer, display, window, gc);
                 },
                 else => continue,
             }
         }
 
-        redraw(&GlobalBackBuffer, display, window, gc);
+        redraw(&GlobalOffScreenBuffer, display, window, gc);
 
         // Todo: RDTSC() to get cycles/frame
         end_time = time.milliTimestamp();
@@ -167,17 +154,17 @@ pub fn main() !u8 {
             fps = @divFloor(1000, time_per_frame);
         }
 
-        std.debug.print("MsPerFrame: {d}\t FPS: {d}\n", .{ time_per_frame, fps });
+        //std.debug.print("MsPerFrame: {d}\t FPS: {d}\n", .{ time_per_frame, fps });
         start_time = end_time;
     }
 
     return 0;
 }
 
-fn play_audio(server: ?*c.struct_pa_simple, buffer: *X11BackBuffer) void {
+fn play_audio(server: ?*c.struct_pa_simple, buffer: *handmade.OffScreenBuffer) void {
     var wave_pos: f32 = 0;
     var t: f32 = 0;
-    const volume: f32 = 8000;
+    const volume: f32 = 1000;
     var tone_volume: i16 = @intFromFloat(volume);
     var i: usize = 0;
     while (i < SoundBufferSize) : (i += 2) {
@@ -195,35 +182,27 @@ fn play_audio(server: ?*c.struct_pa_simple, buffer: *X11BackBuffer) void {
     }
 
     // Todo: this method blocks, use a async one instead
-    _ = c.pa_simple_write(server, @ptrCast(buffer.pa_memory), SoundBufferSize * @sizeOf(i16), null);
+    const write_err = c.pa_simple_write(server, @ptrCast(buffer.pa_memory), SoundBufferSize * @sizeOf(i16), null);
+    if (write_err < 0) {
+        std.debug.print("Audio write error:{s}\n", .{c.pa_strerror(write_err)});
+    }
 }
 
-fn get_memory_size(buffer: X11BackBuffer) usize {
-    return buffer.width * buffer.height * buffer.bytes_per_pixel;
-}
-
-fn resize_memory(buffer: *X11BackBuffer, arena: *std.heap.ArenaAllocator) void {
+fn resize_memory(buffer: *handmade.OffScreenBuffer, arena: *std.heap.ArenaAllocator) void {
     // Todo: re-calculate the aspect ratio and stretch image onto window
     _ = arena.reset(.free_all);
 
     // Todo: handle this at some point?
-    buffer.memory = arena.allocator().alloc(u32, get_memory_size(buffer.*)) catch unreachable;
+    buffer.memory = arena.allocator().alloc(u32, buffer.get_memory_size()) catch unreachable;
 }
 
-fn redraw(buffer: *X11BackBuffer, display: ?*c.Display, window: c.Window, gc: c.GC) void {
+fn redraw(buffer: *handmade.OffScreenBuffer, display: ?*c.Display, window: c.Window, gc: c.GC) void {
     var wa: c.XWindowAttributes = undefined;
     _ = c.XGetWindowAttributes(display, window, &wa);
 
     @memset(buffer.memory, 0);
 
-    var pixel_idx: usize = 0;
-    for (0..buffer.height) |y| {
-        pixel_idx = y * buffer.width;
-
-        for (0..buffer.width) |x| {
-            buffer.memory[pixel_idx + x] = @intCast(x * y);
-        }
-    }
+    handmade.GameUpdateAndRenderer(buffer);
 
     const image = c.XCreateImage(
         display,
@@ -232,11 +211,11 @@ fn redraw(buffer: *X11BackBuffer, display: ?*c.Display, window: c.Window, gc: c.
         c.ZPixmap,
         0,
         @ptrCast(buffer.memory),
-        @intCast(buffer.width),
-        @intCast(buffer.height),
+        @intCast(buffer.window_width),
+        @intCast(buffer.window_height),
         32,
         0,
     );
 
-    _ = c.XPutImage(display, window, gc, image, 0, 0, 0, 0, @intCast(buffer.width), @intCast(buffer.height));
+    _ = c.XPutImage(display, window, gc, image, 0, 0, 0, 0, @intCast(buffer.window_width), @intCast(buffer.window_height));
 }
