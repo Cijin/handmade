@@ -46,7 +46,10 @@ pub fn main() !u8 {
         null,
         null,
         null,
-    );
+    ) orelse {
+        std.debug.print("Failed to create audio stream\n", .{});
+        return 1;
+    };
     defer c.pa_simple_free(audio_stream);
 
     // Todo: run in a different thread (blocking operation)
@@ -164,11 +167,11 @@ pub fn main() !u8 {
 fn play_audio(server: ?*c.struct_pa_simple, buffer: *handmade.OffScreenBuffer) void {
     var wave_pos: f32 = 0;
     var t: f32 = 0;
-    const volume: f32 = 1000;
+    const volume: f32 = 8000;
     var tone_volume: i16 = @intFromFloat(volume);
     var i: usize = 0;
     while (i < SoundBufferSize) : (i += 2) {
-        if (wave_pos <= Period) {
+        if (wave_pos >= Period) {
             wave_pos = 0;
         }
 
@@ -181,11 +184,14 @@ fn play_audio(server: ?*c.struct_pa_simple, buffer: *handmade.OffScreenBuffer) v
         wave_pos += 1;
     }
 
-    // Todo: this method blocks, use a async one instead
-    const write_err = c.pa_simple_write(server, @ptrCast(buffer.pa_memory), SoundBufferSize * @sizeOf(i16), null);
-    if (write_err < 0) {
-        std.debug.print("Audio write error:{s}\n", .{c.pa_strerror(write_err)});
+    // Todo: this method blocks run in seperate thread
+    var error_code: c_int = 0;
+    const result = c.pa_simple_write(server, @ptrCast(buffer.pa_memory), SoundBufferSize * @sizeOf(i16), &error_code);
+    if (result < 0) {
+        std.debug.print("Audio write failed: {d}\n", .{error_code});
+        return;
     }
+    _ = c.pa_simple_drain(server, null);
 }
 
 fn resize_memory(buffer: *handmade.OffScreenBuffer, arena: *std.heap.ArenaAllocator) void {
