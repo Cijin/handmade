@@ -9,15 +9,9 @@ const c = @cImport({
     @cInclude("pulse/error.h");
 });
 
-// 27 Aug: Todo:
-// RTDSC asm (after 0.15.1 update)
-const SampleRate: f32 = 48000;
-const Channels: u8 = 2;
-const SoundBufferSize: usize = SampleRate * Channels;
-const Hz: f32 = 256;
-const Period: f32 = SampleRate / Hz;
-
+// 27 Aug: Todo: RTDSC asm
 var GlobalOffScreenBuffer: handmade.OffScreenBuffer = undefined;
+var GlobalSoundBuffer: handmade.SoundBuffer = undefined;
 
 pub fn main() !u8 {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -26,16 +20,19 @@ pub fn main() !u8 {
     GlobalOffScreenBuffer.window_width = 600;
     GlobalOffScreenBuffer.window_height = 480;
     GlobalOffScreenBuffer.bytes_per_pixel = @sizeOf(u32);
-
     GlobalOffScreenBuffer.memory = arena.allocator().alloc(u32, GlobalOffScreenBuffer.get_memory_size()) catch unreachable;
-    GlobalOffScreenBuffer.pa_memory = arena.allocator().alloc(i16, SoundBufferSize) catch unreachable;
+
+    // Todo: set frame rate
+    GlobalSoundBuffer.sample_rate = 48000;
+    GlobalSoundBuffer.channels = 2;
+    GlobalSoundBuffer.hz = 256;
+    GlobalSoundBuffer.buffer = arena.allocator().alloc(i16, GlobalSoundBuffer.get_buffer_size()) catch unreachable;
 
     var sample_spec = c.struct_pa_sample_spec{
         .format = c.PA_SAMPLE_S16NE,
-        .channels = Channels,
-        .rate = SampleRate,
+        .channels = @intFromFloat(GlobalSoundBuffer.channels),
+        .rate = @intFromFloat(GlobalSoundBuffer.sample_rate),
     };
-
     const audio_stream = c.pa_simple_new(
         null,
         "handmade",
@@ -51,11 +48,6 @@ pub fn main() !u8 {
         return 1;
     };
     defer c.pa_simple_free(audio_stream);
-
-    // Todo: run in a different thread (blocking operation)
-    // I forogot to close the server while testing async, so this does not work
-    // right now
-    play_audio(audio_stream, &GlobalOffScreenBuffer);
 
     // On a POSIX-conformant system, if the display_name is NULL, it defaults to the value of the DISPLAY environment variable.
     const display = c.XOpenDisplay(null) orelse {
@@ -123,6 +115,7 @@ pub fn main() !u8 {
                         c.XK_Escape => {},
                         else => {},
                     }
+                    // Todo: update tone_hz on w,a,s,d
                 },
                 c.KeyRelease => {
                     // Todo: send this to renderer, maybe?
@@ -139,16 +132,20 @@ pub fn main() !u8 {
                 c.ConfigureNotify => {
                     GlobalOffScreenBuffer.window_height = @intCast(event.xconfigure.height);
                     GlobalOffScreenBuffer.window_width = @intCast(event.xconfigure.width);
-
-                    resize_memory(&GlobalOffScreenBuffer, &arena);
-
-                    redraw(&GlobalOffScreenBuffer, display, window, gc);
+                    resize_memory(&GlobalOffScreenBuffer, &GlobalSoundBuffer, &arena);
                 },
                 else => continue,
             }
         }
 
-        redraw(&GlobalOffScreenBuffer, display, window, gc);
+        render_game(
+            &GlobalOffScreenBuffer,
+            &GlobalSoundBuffer,
+            audio_stream,
+            display,
+            window,
+            gc,
+        );
 
         // Todo: RDTSC() to get cycles/frame
         end_time = time.milliTimestamp();
@@ -157,58 +154,57 @@ pub fn main() !u8 {
             fps = @divFloor(1000, time_per_frame);
         }
 
-        //std.debug.print("MsPerFrame: {d}\t FPS: {d}\n", .{ time_per_frame, fps });
+        std.debug.print("MsPerFrame: {d}\t FPS: {d}\n", .{ time_per_frame, fps });
         start_time = end_time;
     }
 
     return 0;
 }
 
-fn play_audio(server: ?*c.struct_pa_simple, buffer: *handmade.OffScreenBuffer) void {
-    var wave_pos: f32 = 0;
-    var t: f32 = 0;
-    const volume: f32 = 8000;
-    var tone_volume: i16 = @intFromFloat(volume);
-    var i: usize = 0;
-    while (i < SoundBufferSize) : (i += 2) {
-        if (wave_pos >= Period) {
-            wave_pos = 0;
-        }
-
-        t = 2 * math.pi * (wave_pos / Period);
-        const sine_t = @sin(t) * volume;
-        tone_volume = @intFromFloat(sine_t);
-
-        buffer.pa_memory[i] = tone_volume;
-        buffer.pa_memory[i + 1] = tone_volume;
-        wave_pos += 1;
-    }
-
+fn write_audio(server: ?*c.struct_pa_simple, sound_buffer: *handmade.SoundBuffer) void {
     // Todo: this method blocks run in seperate thread
     var error_code: c_int = 0;
-    const result = c.pa_simple_write(server, @ptrCast(buffer.pa_memory), SoundBufferSize * @sizeOf(i16), &error_code);
+    // Todo: how much can be written here at once?
+    const result = c.pa_simple_write(
+        server,
+        @ptrCast(sound_buffer.buffer),
+        sound_buffer.buffer.len * @sizeOf(i16),
+        &error_code,
+    );
     if (result < 0) {
         std.debug.print("Audio write failed: {d}\n", .{error_code});
         return;
     }
+
+    // Todo: log?
     _ = c.pa_simple_drain(server, null);
 }
 
-fn resize_memory(buffer: *handmade.OffScreenBuffer, arena: *std.heap.ArenaAllocator) void {
+fn resize_memory(buffer: *handmade.OffScreenBuffer, sound_buffer: *handmade.SoundBuffer, arena: *std.heap.ArenaAllocator) void {
     // Todo: re-calculate the aspect ratio and stretch image onto window
     _ = arena.reset(.free_all);
 
     // Todo: handle this at some point?
+    sound_buffer.buffer = arena.allocator().alloc(i16, sound_buffer.get_buffer_size()) catch unreachable;
     buffer.memory = arena.allocator().alloc(u32, buffer.get_memory_size()) catch unreachable;
 }
 
-fn redraw(buffer: *handmade.OffScreenBuffer, display: ?*c.Display, window: c.Window, gc: c.GC) void {
+fn render_game(
+    screen_buffer: *handmade.OffScreenBuffer,
+    sound_buffer: *handmade.SoundBuffer,
+    _: ?*c.struct_pa_simple,
+    display: ?*c.Display,
+    window: c.Window,
+    gc: c.GC,
+) void {
     var wa: c.XWindowAttributes = undefined;
     _ = c.XGetWindowAttributes(display, window, &wa);
 
-    @memset(buffer.memory, 0);
+    handmade.GameUpdateAndRenderer(screen_buffer, sound_buffer);
 
-    handmade.GameUpdateAndRenderer(buffer);
+    // Todo: run in a different thread (blocking operation)
+    // Todo: this does not work atm
+    //write_audio(audio_stream, &GlobalSoundBuffer);
 
     const image = c.XCreateImage(
         display,
@@ -216,12 +212,12 @@ fn redraw(buffer: *handmade.OffScreenBuffer, display: ?*c.Display, window: c.Win
         @intCast(wa.depth),
         c.ZPixmap,
         0,
-        @ptrCast(buffer.memory),
-        @intCast(buffer.window_width),
-        @intCast(buffer.window_height),
+        @ptrCast(screen_buffer.memory),
+        @intCast(screen_buffer.window_width),
+        @intCast(screen_buffer.window_height),
         32,
         0,
     );
 
-    _ = c.XPutImage(display, window, gc, image, 0, 0, 0, 0, @intCast(buffer.window_width), @intCast(buffer.window_height));
+    _ = c.XPutImage(display, window, gc, image, 0, 0, 0, 0, @intCast(screen_buffer.window_width), @intCast(screen_buffer.window_height));
 }
