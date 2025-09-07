@@ -9,9 +9,8 @@ const c = @cImport({
     @cInclude("pulse/error.h");
 });
 
-// 27 Aug: Todo: RTDSC asm
-var GlobalOffScreenBuffer: handmade.OffScreenBuffer = undefined;
 var GlobalSoundBuffer: handmade.SoundBuffer = undefined;
+var GlobalOffScreenBuffer: handmade.OffScreenBuffer = undefined;
 
 pub fn main() !u8 {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -24,6 +23,7 @@ pub fn main() !u8 {
 
     // Todo: set frame rate
     GlobalSoundBuffer.sample_rate = 48000;
+    GlobalSoundBuffer.tone_volume = 8000;
     GlobalSoundBuffer.channels = 2;
     GlobalSoundBuffer.hz = 256;
     GlobalSoundBuffer.buffer = arena.allocator().alloc(i16, GlobalSoundBuffer.get_buffer_size()) catch unreachable;
@@ -33,9 +33,9 @@ pub fn main() !u8 {
         .channels = @intFromFloat(GlobalSoundBuffer.channels),
         .rate = @intFromFloat(GlobalSoundBuffer.sample_rate),
     };
-    const audio_stream = c.pa_simple_new(
+    const audio_server = c.pa_simple_new(
         null,
-        "handmade",
+        "handmade_audio",
         c.PA_STREAM_PLAYBACK,
         null,
         "game",
@@ -47,7 +47,7 @@ pub fn main() !u8 {
         std.debug.print("Failed to create audio stream\n", .{});
         return 1;
     };
-    defer c.pa_simple_free(audio_stream);
+    defer c.pa_simple_free(audio_server);
 
     // On a POSIX-conformant system, if the display_name is NULL, it defaults to the value of the DISPLAY environment variable.
     const display = c.XOpenDisplay(null) orelse {
@@ -103,19 +103,29 @@ pub fn main() !u8 {
             _ = c.XNextEvent(display, &event);
             switch (event.type) {
                 c.KeyPress => {
-                    // Todo: send this to the renderer
                     const keysym = c.XLookupKeysym(&event.xkey, 0);
                     switch (keysym) {
-                        c.XK_W => {},
-                        c.XK_A => {},
-                        c.XK_S => {},
-                        c.XK_D => {},
-                        c.XK_F => {},
-                        c.XK_space => {},
-                        c.XK_Escape => {},
+                        'w' => {
+                            GlobalSoundBuffer.hz = 82;
+                        },
+                        'a' => {
+                            GlobalSoundBuffer.hz = 440;
+                        },
+                        's' => {
+                            GlobalSoundBuffer.hz = 880;
+                        },
+                        'd' => {
+                            GlobalSoundBuffer.hz = 294;
+                        },
+                        'f' => {
+                            GlobalSoundBuffer.hz = 175;
+                        },
+                        c.XK_Escape => {
+                            quit = true;
+                            break;
+                        },
                         else => {},
                     }
-                    // Todo: update tone_hz on w,a,s,d
                 },
                 c.KeyRelease => {
                     // Todo: send this to renderer, maybe?
@@ -141,7 +151,7 @@ pub fn main() !u8 {
         render_game(
             &GlobalOffScreenBuffer,
             &GlobalSoundBuffer,
-            audio_stream,
+            audio_server,
             display,
             window,
             gc,
@@ -162,9 +172,7 @@ pub fn main() !u8 {
 }
 
 fn write_audio(server: ?*c.struct_pa_simple, sound_buffer: *handmade.SoundBuffer) void {
-    // Todo: this method blocks run in seperate thread
     var error_code: c_int = 0;
-    // Todo: how much can be written here at once?
     const result = c.pa_simple_write(
         server,
         @ptrCast(sound_buffer.buffer),
@@ -172,11 +180,10 @@ fn write_audio(server: ?*c.struct_pa_simple, sound_buffer: *handmade.SoundBuffer
         &error_code,
     );
     if (result < 0) {
-        std.debug.print("Audio write failed: {d}\n", .{error_code});
+        std.debug.print("Audio write error: {s}\n", .{c.pa_strerror(error_code)});
         return;
     }
 
-    // Todo: log?
     _ = c.pa_simple_drain(server, null);
 }
 
@@ -192,7 +199,7 @@ fn resize_memory(buffer: *handmade.OffScreenBuffer, sound_buffer: *handmade.Soun
 fn render_game(
     screen_buffer: *handmade.OffScreenBuffer,
     sound_buffer: *handmade.SoundBuffer,
-    _: ?*c.struct_pa_simple,
+    audio_server: ?*c.struct_pa_simple,
     display: ?*c.Display,
     window: c.Window,
     gc: c.GC,
@@ -203,8 +210,8 @@ fn render_game(
     handmade.GameUpdateAndRenderer(screen_buffer, sound_buffer);
 
     // Todo: run in a different thread (blocking operation)
-    // Todo: this does not work atm
-    //write_audio(audio_stream, &GlobalSoundBuffer);
+    std.debug.print("Hz:{d}\n", .{GlobalSoundBuffer.hz});
+    write_audio(audio_server, &GlobalSoundBuffer);
 
     const image = c.XCreateImage(
         display,
