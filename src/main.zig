@@ -35,6 +35,8 @@ pub fn main() !u8 {
     };
     const audio_server = c.pa_simple_new(
         null,
+        // if audio does not work out of the blue, try changing server name seems to work for some reason
+        // Todo: check previously open servers that are not closed
         "handmade_audio",
         c.PA_STREAM_PLAYBACK,
         null,
