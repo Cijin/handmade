@@ -11,10 +11,13 @@ const c = @cImport({
 
 var GlobalSoundBuffer: handmade.SoundBuffer = undefined;
 var GlobalOffScreenBuffer: handmade.OffScreenBuffer = undefined;
+var GlobalKeyboardInput: handmade.Input = undefined;
 
 pub fn main() !u8 {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
+
+    GlobalKeyboardInput.type = handmade.InputType.Keyboard;
 
     GlobalOffScreenBuffer.window_width = 600;
     GlobalOffScreenBuffer.window_height = 480;
@@ -25,7 +28,7 @@ pub fn main() !u8 {
     GlobalSoundBuffer.sample_rate = 48000;
     GlobalSoundBuffer.tone_volume = 8000;
     GlobalSoundBuffer.channels = 2;
-    GlobalSoundBuffer.hz = 256;
+    GlobalSoundBuffer.tone_hz = 256;
     GlobalSoundBuffer.buffer = arena.allocator().alloc(i16, GlobalSoundBuffer.get_buffer_size()) catch unreachable;
 
     var sample_spec = c.struct_pa_sample_spec{
@@ -36,7 +39,6 @@ pub fn main() !u8 {
     const audio_server = c.pa_simple_new(
         null,
         // if audio does not work out of the blue, try changing server name seems to work for some reason
-        // Todo: check previously open servers that are not closed
         "handmade_audio",
         c.PA_STREAM_PLAYBACK,
         null,
@@ -106,31 +108,18 @@ pub fn main() !u8 {
             switch (event.type) {
                 c.KeyPress => {
                     const keysym = c.XLookupKeysym(&event.xkey, 0);
-                    switch (keysym) {
-                        'w' => {
-                            GlobalSoundBuffer.hz = 82;
-                        },
-                        'a' => {
-                            GlobalSoundBuffer.hz = 440;
-                        },
-                        's' => {
-                            GlobalSoundBuffer.hz = 880;
-                        },
-                        'd' => {
-                            GlobalSoundBuffer.hz = 294;
-                        },
-                        'f' => {
-                            GlobalSoundBuffer.hz = 175;
-                        },
-                        c.XK_Escape => {
-                            quit = true;
-                            break;
-                        },
-                        else => {},
+                    // Todo: handle this in the game at some point
+                    if (keysym == c.XK_Escape) {
+                        quit = true;
+                        break;
+                    } else {
+                        GlobalKeyboardInput.key = @intCast(keysym);
                     }
                 },
                 c.KeyRelease => {
-                    // Todo: send this to renderer, maybe?
+                    const keysym = c.XLookupKeysym(&event.xkey, 0);
+                    GlobalKeyboardInput.key_released = @intCast(keysym);
+                    GlobalKeyboardInput.time = @intCast(event.xkey.time);
                 },
                 // Todo: handle window destroyed or prematurely closed
                 // so that it can be restarted if it was unintended
@@ -151,6 +140,7 @@ pub fn main() !u8 {
         }
 
         render_game(
+            &GlobalKeyboardInput,
             &GlobalOffScreenBuffer,
             &GlobalSoundBuffer,
             audio_server,
@@ -199,6 +189,7 @@ fn resize_memory(buffer: *handmade.OffScreenBuffer, sound_buffer: *handmade.Soun
 }
 
 fn render_game(
+    input: *handmade.Input,
     screen_buffer: *handmade.OffScreenBuffer,
     sound_buffer: *handmade.SoundBuffer,
     audio_server: ?*c.struct_pa_simple,
@@ -209,10 +200,9 @@ fn render_game(
     var wa: c.XWindowAttributes = undefined;
     _ = c.XGetWindowAttributes(display, window, &wa);
 
-    handmade.GameUpdateAndRenderer(screen_buffer, sound_buffer);
+    handmade.GameUpdateAndRenderer(input, screen_buffer, sound_buffer);
 
     // Todo: run in a different thread (blocking operation)
-    std.debug.print("Hz:{d}\n", .{GlobalSoundBuffer.hz});
     write_audio(audio_server, &GlobalSoundBuffer);
 
     const image = c.XCreateImage(
