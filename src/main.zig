@@ -1,4 +1,5 @@
 const std = @import("std");
+const mem = std.mem;
 const time = std.time;
 const math = std.math;
 const handmade = @import("handmade.zig");
@@ -9,6 +10,11 @@ const c = @cImport({
     @cInclude("pulse/error.h");
 });
 
+const KB = 1024;
+const MB = KB * 1024;
+const GB = MB * 1024;
+const TransientStorageSize = 1 * GB;
+
 var GlobalSoundBuffer: handmade.SoundBuffer = undefined;
 var GlobalOffScreenBuffer: handmade.OffScreenBuffer = undefined;
 var GlobalKeyboardInput: handmade.Input = undefined;
@@ -17,19 +23,26 @@ pub fn main() !u8 {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
 
+    const game_memory = arena.allocator().create(handmade.GameMemory) catch unreachable;
+    game_memory.* = handmade.GameMemory{
+        .is_initialized = false,
+        .game_state = arena.allocator().create(handmade.GameState) catch unreachable,
+        .transient_storage = arena.allocator().alloc(u8, TransientStorageSize) catch unreachable,
+    };
+
     GlobalKeyboardInput.type = handmade.InputType.Keyboard;
 
-    GlobalOffScreenBuffer.window_width = 600;
-    GlobalOffScreenBuffer.window_height = 480;
-    GlobalOffScreenBuffer.bytes_per_pixel = @sizeOf(u32);
-    GlobalOffScreenBuffer.memory = arena.allocator().alloc(u32, GlobalOffScreenBuffer.get_memory_size()) catch unreachable;
-
+    // Todo: both buffers do not work
     // Todo: set frame rate
     GlobalSoundBuffer.sample_rate = 48000;
     GlobalSoundBuffer.tone_volume = 8000;
     GlobalSoundBuffer.channels = 2;
-    GlobalSoundBuffer.tone_hz = 256;
-    GlobalSoundBuffer.buffer = arena.allocator().alloc(i16, GlobalSoundBuffer.get_buffer_size()) catch unreachable;
+    GlobalSoundBuffer.buffer = @alignCast(mem.bytesAsSlice(i16, game_memory.transient_storage));
+
+    GlobalOffScreenBuffer.window_width = 600;
+    GlobalOffScreenBuffer.window_height = 480;
+    GlobalOffScreenBuffer.bytes_per_pixel = @sizeOf(u32);
+    GlobalOffScreenBuffer.memory = @alignCast(mem.bytesAsSlice(u32, game_memory.transient_storage[GlobalSoundBuffer.buffer.len * @sizeOf(i16) ..]));
 
     var sample_spec = c.struct_pa_sample_spec{
         .format = c.PA_SAMPLE_S16NE,
@@ -133,13 +146,15 @@ pub fn main() !u8 {
                 c.ConfigureNotify => {
                     GlobalOffScreenBuffer.window_height = @intCast(event.xconfigure.height);
                     GlobalOffScreenBuffer.window_width = @intCast(event.xconfigure.width);
-                    resize_memory(&GlobalOffScreenBuffer, &GlobalSoundBuffer, &arena);
+
+                    resize_memory(game_memory, &GlobalOffScreenBuffer);
                 },
                 else => continue,
             }
         }
 
         render_game(
+            game_memory,
             &GlobalKeyboardInput,
             &GlobalOffScreenBuffer,
             &GlobalSoundBuffer,
@@ -179,16 +194,12 @@ fn write_audio(server: ?*c.struct_pa_simple, sound_buffer: *handmade.SoundBuffer
     _ = c.pa_simple_drain(server, null);
 }
 
-fn resize_memory(buffer: *handmade.OffScreenBuffer, sound_buffer: *handmade.SoundBuffer, arena: *std.heap.ArenaAllocator) void {
-    // Todo: re-calculate the aspect ratio and stretch image onto window
-    _ = arena.reset(.free_all);
-
-    // Todo: handle this at some point?
-    sound_buffer.buffer = arena.allocator().alloc(i16, sound_buffer.get_buffer_size()) catch unreachable;
-    buffer.memory = arena.allocator().alloc(u32, buffer.get_memory_size()) catch unreachable;
+fn resize_memory(game_memory: *handmade.GameMemory, buffer: *handmade.OffScreenBuffer) void {
+    buffer.memory = @alignCast(mem.bytesAsSlice(u32, game_memory.transient_storage[GlobalSoundBuffer.buffer.len * @sizeOf(i16) ..]));
 }
 
 fn render_game(
+    game_memory: *handmade.GameMemory,
     input: *handmade.Input,
     screen_buffer: *handmade.OffScreenBuffer,
     sound_buffer: *handmade.SoundBuffer,
@@ -200,7 +211,7 @@ fn render_game(
     var wa: c.XWindowAttributes = undefined;
     _ = c.XGetWindowAttributes(display, window, &wa);
 
-    handmade.GameUpdateAndRenderer(input, screen_buffer, sound_buffer);
+    handmade.GameUpdateAndRenderer(game_memory, input, screen_buffer, sound_buffer);
 
     // Todo: run in a different thread (blocking operation)
     write_audio(audio_server, &GlobalSoundBuffer);
