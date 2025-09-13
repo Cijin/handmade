@@ -1,5 +1,4 @@
 const std = @import("std");
-const mem = std.mem;
 const time = std.time;
 const math = std.math;
 const handmade = @import("handmade.zig");
@@ -32,17 +31,16 @@ pub fn main() !u8 {
 
     GlobalKeyboardInput.type = handmade.InputType.Keyboard;
 
-    // Todo: both buffers do not work
     // Todo: set frame rate
     GlobalSoundBuffer.sample_rate = 48000;
     GlobalSoundBuffer.tone_volume = 8000;
     GlobalSoundBuffer.channels = 2;
-    GlobalSoundBuffer.buffer = @alignCast(mem.bytesAsSlice(i16, game_memory.transient_storage));
+    GlobalSoundBuffer.buffer = arena.allocator().alloc(i16, GlobalSoundBuffer.get_buffer_size()) catch unreachable;
 
     GlobalOffScreenBuffer.window_width = 600;
     GlobalOffScreenBuffer.window_height = 480;
     GlobalOffScreenBuffer.bytes_per_pixel = @sizeOf(u32);
-    GlobalOffScreenBuffer.memory = @alignCast(mem.bytesAsSlice(u32, game_memory.transient_storage[GlobalSoundBuffer.buffer.len * @sizeOf(i16) ..]));
+    GlobalOffScreenBuffer.memory = arena.allocator().alloc(u32, GlobalOffScreenBuffer.get_memory_size()) catch unreachable;
 
     var sample_spec = c.struct_pa_sample_spec{
         .format = c.PA_SAMPLE_S16NE,
@@ -146,8 +144,7 @@ pub fn main() !u8 {
                 c.ConfigureNotify => {
                     GlobalOffScreenBuffer.window_height = @intCast(event.xconfigure.height);
                     GlobalOffScreenBuffer.window_width = @intCast(event.xconfigure.width);
-
-                    resize_memory(game_memory, &GlobalOffScreenBuffer);
+                    //resize_memory(&GlobalOffScreenBuffer, &GlobalSoundBuffer, &arena);
                 },
                 else => continue,
             }
@@ -194,8 +191,13 @@ fn write_audio(server: ?*c.struct_pa_simple, sound_buffer: *handmade.SoundBuffer
     _ = c.pa_simple_drain(server, null);
 }
 
-fn resize_memory(game_memory: *handmade.GameMemory, buffer: *handmade.OffScreenBuffer) void {
-    buffer.memory = @alignCast(mem.bytesAsSlice(u32, game_memory.transient_storage[GlobalSoundBuffer.buffer.len * @sizeOf(i16) ..]));
+fn resize_memory(buffer: *handmade.OffScreenBuffer, sound_buffer: *handmade.SoundBuffer, arena: *std.heap.ArenaAllocator) void {
+    // Todo: resize display buffer instead of reset all
+    _ = arena.reset(.free_all);
+
+    // Todo: handle this at some point?
+    sound_buffer.buffer = arena.allocator().alloc(i16, sound_buffer.get_buffer_size()) catch unreachable;
+    buffer.memory = arena.allocator().alloc(u32, buffer.get_memory_size()) catch unreachable;
 }
 
 fn render_game(

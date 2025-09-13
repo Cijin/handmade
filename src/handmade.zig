@@ -100,7 +100,7 @@ fn renderer(buffer: *OffScreenBuffer) void {
         pixel_idx = y * buffer.window_width;
 
         for (0..buffer.window_width) |x| {
-            buffer.memory[pixel_idx + x] = @intCast(x * y);
+            buffer.memory[pixel_idx + x] = @intCast(x + y);
         }
     }
 }
