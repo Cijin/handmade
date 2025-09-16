@@ -1,7 +1,11 @@
 const std = @import("std");
+const fs = std.fs;
+const mem = std.mem;
+const builtin = @import("builtin");
 const time = std.time;
 const math = std.math;
 const handmade = @import("handmade.zig");
+// Todo: check static linking options
 const c = @cImport({
     @cInclude("X11/Xlib.h");
     @cInclude("X11/keysym.h");
@@ -22,6 +26,7 @@ pub fn main() !u8 {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
 
+    // Todo: transient memory unused
     const game_memory = arena.allocator().create(handmade.GameMemory) catch unreachable;
     game_memory.* = handmade.GameMemory{
         .is_initialized = false,
@@ -41,6 +46,8 @@ pub fn main() !u8 {
     GlobalOffScreenBuffer.window_height = 480;
     GlobalOffScreenBuffer.bytes_per_pixel = @sizeOf(u32);
     GlobalOffScreenBuffer.memory = arena.allocator().alloc(u32, GlobalOffScreenBuffer.get_memory_size()) catch unreachable;
+
+    std.debug.print("Current memory usage: {d}\n", .{arena.queryCapacity()});
 
     var sample_spec = c.struct_pa_sample_spec{
         .format = c.PA_SAMPLE_S16NE,
@@ -168,11 +175,42 @@ pub fn main() !u8 {
             fps = @divFloor(1000, time_per_frame);
         }
 
-        std.debug.print("MsPerFrame: {d}\t FPS: {d}\n", .{ time_per_frame, fps });
+        //std.debug.print("MsPerFrame: {d}\t FPS: {d}\n", .{ time_per_frame, fps });
         start_time = end_time;
     }
 
     return 0;
+}
+
+fn platform_read_entire_file(allocator: mem.Allocator) !fs.File {
+    const pwd = fs.cwd();
+    const file = try pwd.createFile("test", .{ .lock = .exclusive, .read = true });
+    defer file.close();
+
+    const file_stat = try file.stat();
+    const file_size = file_stat.size;
+
+    const written = try file.write("this is some test to verify file write");
+
+    // Todo: i'm not sure this is the right way to reset the file handle
+    try file.seekTo(0);
+    const seek_pos = try file.getPos();
+
+    const dest: []u8 = try allocator.alloc(u8, file_size);
+    const bytes_read = file.read(dest) catch |err| {
+        allocator.free(dest);
+        return err;
+    };
+
+    std.debug.print("File stats: SeekPos: {d} | Size:{d}| Read: {d}| Written: {d}| Contents:\n {s}\n", .{
+        seek_pos,
+        file_size,
+        bytes_read,
+        written,
+        dest,
+    });
+
+    return file;
 }
 
 fn write_audio(server: ?*c.struct_pa_simple, sound_buffer: *handmade.SoundBuffer) void {
@@ -205,7 +243,7 @@ fn render_game(
     input: *handmade.Input,
     screen_buffer: *handmade.OffScreenBuffer,
     sound_buffer: *handmade.SoundBuffer,
-    audio_server: ?*c.struct_pa_simple,
+    _: ?*c.struct_pa_simple,
     display: ?*c.Display,
     window: c.Window,
     gc: c.GC,
@@ -216,7 +254,7 @@ fn render_game(
     handmade.GameUpdateAndRenderer(game_memory, input, screen_buffer, sound_buffer);
 
     // Todo: run in a different thread (blocking operation)
-    write_audio(audio_server, &GlobalSoundBuffer);
+    //write_audio(audio_server, &GlobalSoundBuffer);
 
     const image = c.XCreateImage(
         display,

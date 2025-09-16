@@ -105,7 +105,12 @@ fn renderer(buffer: *OffScreenBuffer) void {
     }
 }
 
-pub fn GameUpdateAndRenderer(game_memory: *GameMemory, input: *Input, buffer: *OffScreenBuffer, sound_buffer: *SoundBuffer) void {
+pub fn GameUpdateAndRenderer(
+    game_memory: *GameMemory,
+    input: *Input,
+    buffer: *OffScreenBuffer,
+    sound_buffer: *SoundBuffer,
+) void {
     if (!game_memory.is_initialized) {
         game_memory.game_state.tone_hz = 256;
         game_memory.game_state.blue_offset = 0;

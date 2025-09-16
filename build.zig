@@ -33,9 +33,10 @@ pub fn build(b: *std.Build) void {
         .root_module = exe_mod,
     });
 
-    exe.linkSystemLibrary("X11");
-    exe.linkSystemLibrary("pulse-simple");
-    exe.linkLibC();
+    // Todo: static linking?
+    exe.root_module.linkSystemLibrary("X11", .{ .needed = true });
+    exe.root_module.linkSystemLibrary("pulse-simple", .{ .weak = true });
+    exe.root_module.link_libc = true;
 
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
