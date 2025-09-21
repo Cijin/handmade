@@ -47,8 +47,6 @@ pub fn main() !u8 {
     GlobalOffScreenBuffer.bytes_per_pixel = @sizeOf(u32);
     GlobalOffScreenBuffer.memory = arena.allocator().alloc(u32, GlobalOffScreenBuffer.get_memory_size()) catch unreachable;
 
-    std.debug.print("Current memory usage: {d}\n", .{arena.queryCapacity()});
-
     var sample_spec = c.struct_pa_sample_spec{
         .format = c.PA_SAMPLE_S16NE,
         .channels = @intFromFloat(GlobalSoundBuffer.channels),
@@ -243,7 +241,7 @@ fn render_game(
     input: *handmade.Input,
     screen_buffer: *handmade.OffScreenBuffer,
     sound_buffer: *handmade.SoundBuffer,
-    _: ?*c.struct_pa_simple,
+    audio_server: ?*c.struct_pa_simple,
     display: ?*c.Display,
     window: c.Window,
     gc: c.GC,
@@ -254,7 +252,7 @@ fn render_game(
     handmade.GameUpdateAndRenderer(game_memory, input, screen_buffer, sound_buffer);
 
     // Todo: run in a different thread (blocking operation)
-    //write_audio(audio_server, &GlobalSoundBuffer);
+    write_audio(audio_server, &GlobalSoundBuffer);
 
     const image = c.XCreateImage(
         display,

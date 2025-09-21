@@ -33,7 +33,7 @@ pub const SoundBuffer = struct {
     tone_volume: f32,
 
     pub fn get_buffer_size(self: *SoundBuffer) usize {
-        return @intFromFloat(self.sample_rate * self.channels);
+        return @intFromFloat(self.sample_rate * self.channels * 2);
     }
 };
 
@@ -73,19 +73,21 @@ fn handle_keypress_event(game_state: *GameState, input: *Input) void {
         .Keyboard => {
             switch (input.key) {
                 'w' => {
+                    // Todo:
+                    // move -blue -green offset
                     game_state.tone_hz = 82;
                 },
                 'a' => {
+                    // move -blue offset
                     game_state.tone_hz = 440;
                 },
                 's' => {
+                    // move +blue +green offset
                     game_state.tone_hz = 880;
                 },
                 'd' => {
+                    // move +green offset
                     game_state.tone_hz = 294;
-                },
-                'f' => {
-                    game_state.tone_hz = 175;
                 },
                 else => {},
             }
