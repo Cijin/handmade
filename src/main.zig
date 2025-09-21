@@ -1,7 +1,8 @@
 const std = @import("std");
-const fs = std.fs;
-const mem = std.mem;
 const builtin = @import("builtin");
+const fs = std.fs;
+const thread = std.Thread;
+const mem = std.mem;
 const time = std.time;
 const math = std.math;
 const handmade = @import("handmade.zig");
@@ -68,6 +69,13 @@ pub fn main() !u8 {
         return 1;
     };
     defer c.pa_simple_free(audio_server);
+
+    var audio_pool: thread.Pool = undefined;
+    audio_pool.init(.{ .allocator = arena.allocator() }) catch |err| {
+        std.debug.print("Failed to initialize thread pool: {any}\n", .{err});
+        return 1;
+    };
+    defer audio_pool.deinit();
 
     // On a POSIX-conformant system, if the display_name is NULL, it defaults to the value of the DISPLAY environment variable.
     const display = c.XOpenDisplay(null) orelse {
@@ -160,6 +168,7 @@ pub fn main() !u8 {
             &GlobalKeyboardInput,
             &GlobalOffScreenBuffer,
             &GlobalSoundBuffer,
+            &audio_pool,
             audio_server,
             display,
             window,
@@ -241,6 +250,7 @@ fn render_game(
     input: *handmade.Input,
     screen_buffer: *handmade.OffScreenBuffer,
     sound_buffer: *handmade.SoundBuffer,
+    audio_pool: *thread.Pool,
     audio_server: ?*c.struct_pa_simple,
     display: ?*c.Display,
     window: c.Window,
@@ -251,8 +261,13 @@ fn render_game(
 
     handmade.GameUpdateAndRenderer(game_memory, input, screen_buffer, sound_buffer);
 
-    // Todo: run in a different thread (blocking operation)
-    write_audio(audio_server, &GlobalSoundBuffer);
+    // Todo:
+    // 1. Stop execution on main loop exit
+    // 2. Fix audio crackling
+    audio_pool.spawn(write_audio, .{ audio_server, &GlobalSoundBuffer }) catch |err| {
+        std.debug.print("Failed to spawn audio thread: {any}\n", .{err});
+        return;
+    };
 
     const image = c.XCreateImage(
         display,
