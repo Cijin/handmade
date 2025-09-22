@@ -14,8 +14,8 @@ const c = @cImport({
     @cInclude("pulse/error.h");
 });
 
-const KB = 1024;
-const MB = KB * 1024;
+const KiB = 1024;
+const MB = KiB * 1024;
 const GB = MB * 1024;
 const TransientStorageSize = 1 * GB;
 
@@ -38,7 +38,7 @@ pub fn main() !u8 {
     GlobalKeyboardInput.type = handmade.InputType.Keyboard;
 
     // Todo: set frame rate
-    GlobalSoundBuffer.sample_rate = 48000;
+    GlobalSoundBuffer.sample_rate = 44100;
     GlobalSoundBuffer.tone_volume = 8000;
     GlobalSoundBuffer.channels = 2;
     GlobalSoundBuffer.buffer = arena.allocator().alloc(i16, GlobalSoundBuffer.get_buffer_size()) catch unreachable;
@@ -49,9 +49,16 @@ pub fn main() !u8 {
     GlobalOffScreenBuffer.memory = arena.allocator().alloc(u32, GlobalOffScreenBuffer.get_memory_size()) catch unreachable;
 
     var sample_spec = c.struct_pa_sample_spec{
-        .format = c.PA_SAMPLE_S16NE,
+        .format = c.PA_SAMPLE_S16LE,
         .channels = @intFromFloat(GlobalSoundBuffer.channels),
         .rate = @intFromFloat(GlobalSoundBuffer.sample_rate),
+    };
+    var buffer_attr = c.struct_pa_buffer_attr{
+        //.maxlength = math.maxInt(u32) - 1,
+        .maxlength = @intCast(GlobalSoundBuffer.get_buffer_size() * 2),
+        .tlength = @intCast(GlobalSoundBuffer.get_buffer_size()),
+        .prebuf = @intCast(GlobalSoundBuffer.get_buffer_size()),
+        .minreq = math.maxInt(u32) - 1,
     };
     const audio_server = c.pa_simple_new(
         null,
@@ -62,13 +69,16 @@ pub fn main() !u8 {
         "game",
         &sample_spec,
         null,
-        null,
+        &buffer_attr,
         null,
     ) orelse {
         std.debug.print("Failed to create audio stream\n", .{});
         return 1;
     };
-    defer c.pa_simple_free(audio_server);
+    defer {
+        _ = c.pa_simple_flush(audio_server, null);
+        c.pa_simple_free(audio_server);
+    }
 
     var audio_pool: thread.Pool = undefined;
     audio_pool.init(.{ .allocator = arena.allocator() }) catch |err| {
@@ -184,6 +194,8 @@ pub fn main() !u8 {
 
         //std.debug.print("MsPerFrame: {d}\t FPS: {d}\n", .{ time_per_frame, fps });
         start_time = end_time;
+        const len = GlobalSoundBuffer.buffer.len;
+        std.debug.print("{any} {any}\n", .{ GlobalSoundBuffer.buffer[0..10], GlobalSoundBuffer.buffer[len - 10 ..] });
     }
 
     return 0;
@@ -225,7 +237,7 @@ fn write_audio(server: ?*c.struct_pa_simple, sound_buffer: *handmade.SoundBuffer
     const result = c.pa_simple_write(
         server,
         @ptrCast(sound_buffer.buffer),
-        sound_buffer.buffer.len * @sizeOf(i16),
+        sound_buffer.get_buffer_size() * @sizeOf(i16),
         &error_code,
     );
     if (result < 0) {
@@ -233,7 +245,11 @@ fn write_audio(server: ?*c.struct_pa_simple, sound_buffer: *handmade.SoundBuffer
         return;
     }
 
-    _ = c.pa_simple_drain(server, null);
+    const drain = c.pa_simple_drain(server, &error_code);
+    if (drain < 0) {
+        std.debug.print("Audio drain error: {s}\n", .{c.pa_strerror(error_code)});
+        return;
+    }
 }
 
 fn resize_memory(buffer: *handmade.OffScreenBuffer, sound_buffer: *handmade.SoundBuffer, arena: *std.heap.ArenaAllocator) void {
@@ -264,6 +280,7 @@ fn render_game(
     // Todo:
     // 1. Stop execution on main loop exit
     // 2. Fix audio crackling
+    // 3. Seems to be happening in between two buffers
     audio_pool.spawn(write_audio, .{ audio_server, &GlobalSoundBuffer }) catch |err| {
         std.debug.print("Failed to spawn audio thread: {any}\n", .{err});
         return;

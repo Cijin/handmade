@@ -33,7 +33,7 @@ pub const SoundBuffer = struct {
     tone_volume: f32,
 
     pub fn get_buffer_size(self: *SoundBuffer) usize {
-        return @intFromFloat(self.sample_rate * self.channels * 2);
+        return @intFromFloat(self.sample_rate * self.channels);
     }
 };
 
