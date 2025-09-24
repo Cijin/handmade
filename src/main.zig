@@ -5,6 +5,7 @@ const thread = std.Thread;
 const mem = std.mem;
 const time = std.time;
 const math = std.math;
+const assert = std.debug.assert;
 const handmade = @import("handmade.zig");
 // Todo: check static linking options
 const c = @cImport({
@@ -18,6 +19,9 @@ const KiB = 1024;
 const MB = KiB * 1024;
 const GB = MB * 1024;
 const TransientStorageSize = 1 * GB;
+// Todo: Get monitor refresh rate
+const TargetFPS = 30;
+const TargetMsPerFrame = 1000 / TargetFPS;
 
 var GlobalSoundBuffer: handmade.SoundBuffer = undefined;
 var GlobalOffScreenBuffer: handmade.OffScreenBuffer = undefined;
@@ -39,7 +43,7 @@ pub fn main() !u8 {
 
     // Todo: set frame rate
     GlobalSoundBuffer.sample_rate = 44100;
-    GlobalSoundBuffer.tone_volume = 8000;
+    GlobalSoundBuffer.tone_volume = 1000;
     GlobalSoundBuffer.channels = 2;
     GlobalSoundBuffer.buffer = arena.allocator().alloc(i16, GlobalSoundBuffer.get_buffer_size()) catch unreachable;
 
@@ -173,9 +177,25 @@ pub fn main() !u8 {
             }
         }
 
-        render_game(
+        handmade.GameUpdateAndRenderer(
             game_memory,
             &GlobalKeyboardInput,
+            &GlobalOffScreenBuffer,
+            &GlobalSoundBuffer,
+        );
+
+        // Todo: RDTSC() to get cycles/frame
+        end_time = time.milliTimestamp();
+        time_per_frame = end_time - start_time;
+        while (time_per_frame < TargetMsPerFrame) {
+            const sleep_time: u64 = @intCast(@divTrunc((TargetMsPerFrame - time_per_frame), 1000));
+            thread.sleep(sleep_time);
+
+            end_time = time.milliTimestamp();
+            time_per_frame = end_time - start_time;
+        }
+
+        render_game(
             &GlobalOffScreenBuffer,
             &GlobalSoundBuffer,
             &audio_pool,
@@ -185,17 +205,19 @@ pub fn main() !u8 {
             gc,
         );
 
-        // Todo: RDTSC() to get cycles/frame
         end_time = time.milliTimestamp();
         time_per_frame = end_time - start_time;
-        if (time_per_frame != 0) {
-            fps = @divFloor(1000, time_per_frame);
-        }
 
-        //std.debug.print("MsPerFrame: {d}\t FPS: {d}\n", .{ time_per_frame, fps });
+        assert(time_per_frame != 0);
+        fps = @divTrunc(1000, time_per_frame);
+
+        std.debug.print("MsPerFrame: {d}\t FPS: {d}\t TargetFPS: {d}\t TargetMsPerFrame: {d}\n", .{
+            time_per_frame,
+            fps,
+            TargetFPS,
+            TargetMsPerFrame,
+        });
         start_time = end_time;
-        const len = GlobalSoundBuffer.buffer.len;
-        std.debug.print("{any} {any}\n", .{ GlobalSoundBuffer.buffer[0..10], GlobalSoundBuffer.buffer[len - 10 ..] });
     }
 
     return 0;
@@ -262,8 +284,6 @@ fn resize_memory(buffer: *handmade.OffScreenBuffer, sound_buffer: *handmade.Soun
 }
 
 fn render_game(
-    game_memory: *handmade.GameMemory,
-    input: *handmade.Input,
     screen_buffer: *handmade.OffScreenBuffer,
     sound_buffer: *handmade.SoundBuffer,
     audio_pool: *thread.Pool,
@@ -275,13 +295,16 @@ fn render_game(
     var wa: c.XWindowAttributes = undefined;
     _ = c.XGetWindowAttributes(display, window, &wa);
 
-    handmade.GameUpdateAndRenderer(game_memory, input, screen_buffer, sound_buffer);
-
     // Todo:
     // 1. Stop execution on main loop exit
     // 2. Fix audio crackling
     // 3. Seems to be happening in between two buffers
-    audio_pool.spawn(write_audio, .{ audio_server, &GlobalSoundBuffer }) catch |err| {
+    // 4. Audio plays 1sec for each frame, that's too much audio data
+    // 5. Ex 200FPS at times, during the same time about 200s worth of audio buffer gets filled
+    // 6. Maybe only fill the buffer for sound enough for 2 frames, rather than filling the entire 1 sec
+    // 7. Overwrite sound buffer if updating it mid-frame (how to know if you are mid-frame?)
+    // 8. Audio gets skipped in between frames as there is 1s of audio and about 20-50ms to render frame
+    audio_pool.spawn(write_audio, .{ audio_server, sound_buffer }) catch |err| {
         std.debug.print("Failed to spawn audio thread: {any}\n", .{err});
         return;
     };
