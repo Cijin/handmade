@@ -7,10 +7,10 @@ const time = std.time;
 const math = std.math;
 const assert = std.debug.assert;
 const handmade = @import("handmade.zig");
-// Todo: check static linking options
 const c = @cImport({
     @cInclude("X11/Xlib.h");
     @cInclude("X11/keysym.h");
+    // Todo: check static linking options
     @cInclude("pulse/simple.h");
     @cInclude("pulse/error.h");
 });
@@ -18,8 +18,10 @@ const c = @cImport({
 const KiB = 1024;
 const MB = KiB * 1024;
 const GB = MB * 1024;
+const BitmapPad = 32;
 const TransientStorageSize = 1 * GB;
 // Todo: Get monitor refresh rate
+// Todo: Get current monitor
 const TargetFPS = 30;
 const TargetMsPerFrame = 1000 / TargetFPS;
 
@@ -41,15 +43,16 @@ pub fn main() !u8 {
 
     GlobalKeyboardInput.type = handmade.InputType.Keyboard;
 
-    // Todo: set frame rate
+    // 44k seems to work better than 48k
     GlobalSoundBuffer.sample_rate = 44100;
     GlobalSoundBuffer.tone_volume = 1000;
     GlobalSoundBuffer.channels = 2;
-    GlobalSoundBuffer.buffer = arena.allocator().alloc(i16, GlobalSoundBuffer.get_buffer_size()) catch unreachable;
+    GlobalSoundBuffer.fade_duration_ms = 20;
+    GlobalSoundBuffer.buffer = arena.allocator().alloc(i16, GlobalSoundBuffer.get_buffer_size(TargetFPS)) catch unreachable;
 
     GlobalOffScreenBuffer.window_width = 600;
     GlobalOffScreenBuffer.window_height = 480;
-    GlobalOffScreenBuffer.bytes_per_pixel = @sizeOf(u32);
+    GlobalOffScreenBuffer.pitch = 0;
     GlobalOffScreenBuffer.memory = arena.allocator().alloc(u32, GlobalOffScreenBuffer.get_memory_size()) catch unreachable;
 
     var sample_spec = c.struct_pa_sample_spec{
@@ -58,11 +61,10 @@ pub fn main() !u8 {
         .rate = @intFromFloat(GlobalSoundBuffer.sample_rate),
     };
     var buffer_attr = c.struct_pa_buffer_attr{
-        //.maxlength = math.maxInt(u32) - 1,
-        .maxlength = @intCast(GlobalSoundBuffer.get_buffer_size() * 2),
-        .tlength = @intCast(GlobalSoundBuffer.get_buffer_size()),
-        .prebuf = @intCast(GlobalSoundBuffer.get_buffer_size()),
-        .minreq = math.maxInt(u32) - 1,
+        .maxlength = math.maxInt(u32) - 1,
+        .tlength = math.maxInt(u32) - 1,
+        .prebuf = math.maxInt(u32) - 1,
+        .minreq = @intCast(GlobalSoundBuffer.get_buffer_size(TargetFPS)),
     };
     const audio_server = c.pa_simple_new(
         null,
@@ -189,6 +191,7 @@ pub fn main() !u8 {
         time_per_frame = end_time - start_time;
         while (time_per_frame < TargetMsPerFrame) {
             const sleep_time: u64 = @intCast(@divTrunc((TargetMsPerFrame - time_per_frame), 1000));
+            // Todo: no precision of timing is guaranteed with thread.sleep, maybe set precision?
             thread.sleep(sleep_time);
 
             end_time = time.milliTimestamp();
@@ -211,12 +214,12 @@ pub fn main() !u8 {
         assert(time_per_frame != 0);
         fps = @divTrunc(1000, time_per_frame);
 
-        std.debug.print("MsPerFrame: {d}\t FPS: {d}\t TargetFPS: {d}\t TargetMsPerFrame: {d}\n", .{
-            time_per_frame,
-            fps,
-            TargetFPS,
-            TargetMsPerFrame,
-        });
+        //std.debug.print("MsPerFrame: {d}\t FPS: {d}\t TargetFPS: {d}\t TargetMsPerFrame: {d}\n", .{
+        //    time_per_frame,
+        //    fps,
+        //    TargetFPS,
+        //    TargetMsPerFrame,
+        //});
         start_time = end_time;
     }
 
@@ -259,17 +262,11 @@ fn write_audio(server: ?*c.struct_pa_simple, sound_buffer: *handmade.SoundBuffer
     const result = c.pa_simple_write(
         server,
         @ptrCast(sound_buffer.buffer),
-        sound_buffer.get_buffer_size() * @sizeOf(i16),
+        sound_buffer.get_buffer_size(TargetFPS) * @sizeOf(i16),
         &error_code,
     );
     if (result < 0) {
         std.debug.print("Audio write error: {s}\n", .{c.pa_strerror(error_code)});
-        return;
-    }
-
-    const drain = c.pa_simple_drain(server, &error_code);
-    if (drain < 0) {
-        std.debug.print("Audio drain error: {s}\n", .{c.pa_strerror(error_code)});
         return;
     }
 }
@@ -295,15 +292,6 @@ fn render_game(
     var wa: c.XWindowAttributes = undefined;
     _ = c.XGetWindowAttributes(display, window, &wa);
 
-    // Todo:
-    // 1. Stop execution on main loop exit
-    // 2. Fix audio crackling
-    // 3. Seems to be happening in between two buffers
-    // 4. Audio plays 1sec for each frame, that's too much audio data
-    // 5. Ex 200FPS at times, during the same time about 200s worth of audio buffer gets filled
-    // 6. Maybe only fill the buffer for sound enough for 2 frames, rather than filling the entire 1 sec
-    // 7. Overwrite sound buffer if updating it mid-frame (how to know if you are mid-frame?)
-    // 8. Audio gets skipped in between frames as there is 1s of audio and about 20-50ms to render frame
     audio_pool.spawn(write_audio, .{ audio_server, sound_buffer }) catch |err| {
         std.debug.print("Failed to spawn audio thread: {any}\n", .{err});
         return;
@@ -318,7 +306,8 @@ fn render_game(
         @ptrCast(screen_buffer.memory),
         @intCast(screen_buffer.window_width),
         @intCast(screen_buffer.window_height),
-        32,
+        BitmapPad,
+        // Todo: specify bytes_per_line
         0,
     );
 

@@ -3,22 +3,12 @@
     "configurations": [
         {
             "name": "Debug Zig (GDB)",
-            "type": "cppdbg",
+            "type": "gdb",
             "request": "launch",
-            "program": "${workspaceFolder}/zig-out/bin/handmade",
-            "args": [],
-            "stopAtEntry": false,
+            "target": "${workspaceFolder}/zig-out/bin/handmade",
             "cwd": "${workspaceFolder}",
-            "environment": [],
-            "externalConsole": false,
-            "MIMode": "gdb",
-            "setupCommands": [
-                {
-                    "description": "Enable pretty-printing for gdb",
-                    "text": "-enable-pretty-printing",
-                    "ignoreFailures": true
-                }
-            ]
+            "preLaunchTask": "zig build",
+            "valuesFormatting": "parseText"
         }
     ]
 }
