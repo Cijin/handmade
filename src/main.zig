@@ -173,6 +173,7 @@ pub fn main() !u8 {
                 c.ConfigureNotify => {
                     GlobalOffScreenBuffer.window_height = @intCast(event.xconfigure.height);
                     GlobalOffScreenBuffer.window_width = @intCast(event.xconfigure.width);
+                    // Todo: handle window resize
                     //resize_memory(&GlobalOffScreenBuffer, &GlobalSoundBuffer, &arena);
                 },
                 else => continue,
@@ -214,12 +215,12 @@ pub fn main() !u8 {
         assert(time_per_frame != 0);
         fps = @divTrunc(1000, time_per_frame);
 
-        //std.debug.print("MsPerFrame: {d}\t FPS: {d}\t TargetFPS: {d}\t TargetMsPerFrame: {d}\n", .{
-        //    time_per_frame,
-        //    fps,
-        //    TargetFPS,
-        //    TargetMsPerFrame,
-        //});
+        std.debug.print("MsPerFrame: {d}\t FPS: {d}\t TargetFPS: {d}\t TargetMsPerFrame: {d}\n", .{
+            time_per_frame,
+            fps,
+            TargetFPS,
+            TargetMsPerFrame,
+        });
         start_time = end_time;
     }
 

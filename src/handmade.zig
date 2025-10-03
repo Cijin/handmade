@@ -45,7 +45,7 @@ pub const SoundBuffer = struct {
 pub const OffScreenBuffer = struct {
     window_width: u32,
     window_height: u32,
-    memory: []u32,
+    memory: [][]u32,
     pitch: usize,
 
     pub fn get_memory_size(self: *OffScreenBuffer) usize {
@@ -102,13 +102,9 @@ fn handle_keypress_event(game_state: *GameState, input: *Input) void {
 
 // Todo: use/update pitch
 fn renderer(buffer: *OffScreenBuffer) void {
-    var pixel_idx: usize = 0;
-    for (0..buffer.window_height) |y| {
-        pixel_idx = (y * buffer.window_width);
-
-        for (0..buffer.window_width) |x| {
-            buffer.memory[pixel_idx + x] = @intCast(x + y);
-        }
+    //var pixel_idx: usize = 0;
+    for (0..buffer.memory.len) |i| {
+        buffer.memory[i] = @intCast(i);
     }
 }
 
