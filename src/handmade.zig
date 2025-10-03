@@ -45,7 +45,7 @@ pub const SoundBuffer = struct {
 pub const OffScreenBuffer = struct {
     window_width: u32,
     window_height: u32,
-    memory: [][]u32,
+    memory: []u32,
     pitch: usize,
 
     pub fn get_memory_size(self: *OffScreenBuffer) usize {
