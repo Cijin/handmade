@@ -1,12 +1,13 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const handmade = @import("handmade.zig");
 const fs = std.fs;
 const thread = std.Thread;
 const mem = std.mem;
 const time = std.time;
 const math = std.math;
 const assert = std.debug.assert;
-const handmade = @import("handmade.zig");
+
 const c = @cImport({
     @cInclude("X11/Xlib.h");
     @cInclude("X11/keysym.h");
@@ -35,7 +36,6 @@ pub fn main() !u8 {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
 
-    // Todo: transient memory unused
     const game_memory = arena.allocator().create(handmade.GameMemory) catch unreachable;
     game_memory.* = handmade.GameMemory{
         .is_initialized = false,
@@ -150,7 +150,6 @@ pub fn main() !u8 {
             switch (event.type) {
                 c.KeyPress => {
                     const keysym = c.XLookupKeysym(&event.xkey, 0);
-                    // Todo: handle this in the game at some point
                     if (keysym == c.XK_Escape) {
                         quit = true;
                         break;
@@ -173,10 +172,7 @@ pub fn main() !u8 {
                     }
                 },
                 c.ConfigureNotify => {
-                    GlobalOffScreenBuffer.window_height = @intCast(event.xconfigure.height);
-                    GlobalOffScreenBuffer.window_width = @intCast(event.xconfigure.width);
-                    // Todo: handle window resize
-                    //resize_memory(&GlobalOffScreenBuffer, &GlobalSoundBuffer, &arena);
+                    // Todo: run window in full screen and disallow resize
                 },
                 else => continue,
             }
@@ -194,7 +190,6 @@ pub fn main() !u8 {
         time_per_frame = end_time - start_time;
         while (time_per_frame < TargetMsPerFrame) {
             const sleep_time: u64 = @intCast(@divTrunc((TargetMsPerFrame - time_per_frame), 1000));
-            // Todo: no precision of timing is guaranteed with thread.sleep, maybe set precision?
             thread.sleep(sleep_time);
 
             end_time = time.milliTimestamp();
@@ -272,15 +267,6 @@ fn write_audio(server: ?*c.struct_pa_simple, sound_buffer: *handmade.SoundBuffer
         std.debug.print("Audio write error: {s}\n", .{c.pa_strerror(error_code)});
         return;
     }
-}
-
-fn resize_memory(buffer: *handmade.OffScreenBuffer, sound_buffer: *handmade.SoundBuffer, arena: *std.heap.ArenaAllocator) void {
-    // Todo: resize display buffer instead of reset all
-    _ = arena.reset(.free_all);
-
-    // Todo: handle this at some point?
-    sound_buffer.buffer = arena.allocator().alloc(i16, sound_buffer.get_buffer_size()) catch unreachable;
-    buffer.memory = arena.allocator().alloc(u32, buffer.get_memory_size()) catch unreachable;
 }
 
 fn render_game(

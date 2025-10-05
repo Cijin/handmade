@@ -44,7 +44,6 @@ pub const SoundBuffer = struct {
     }
 };
 
-// Todo: seperate out window and buffer width
 pub const OffScreenBuffer = struct {
     window_width: u32,
     window_height: u32,
@@ -80,23 +79,18 @@ fn handle_keypress_event(game_state: *GameState, input: *Input) void {
         .Keyboard => {
             switch (input.key) {
                 'w' => {
-                    // Todo:
-                    // move -blue -green offset
                     game_state.tone_hz = 82;
                     game_state.height_offset -= 1;
                 },
                 'a' => {
-                    // move -blue offset
                     game_state.tone_hz = 440;
                     game_state.width_offset -= 1;
                 },
                 's' => {
-                    // move +blue +green offset
                     game_state.tone_hz = 880;
                     game_state.height_offset += 1;
                 },
                 'd' => {
-                    // move +green offset
                     game_state.tone_hz = 294;
                     game_state.width_offset += 1;
                 },
@@ -107,6 +101,7 @@ fn handle_keypress_event(game_state: *GameState, input: *Input) void {
     }
 }
 
+// Todo: strange gaps in the buffer, needs fixing
 fn renderer(game_state: *GameState, buffer: *OffScreenBuffer) void {
     var pixel_idx: usize = 0;
     for (0..buffer.window_width) |x| {
