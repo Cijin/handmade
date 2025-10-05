@@ -2,6 +2,9 @@ const std = @import("std");
 const math = std.math;
 const assert = std.debug.assert;
 
+const BlueOffset = 0x0000ff;
+const GreenOffset = 0x00ff00;
+
 pub const GameMemory = struct {
     is_initialized: bool,
     game_state: *GameState,
@@ -10,10 +13,10 @@ pub const GameMemory = struct {
 
 pub const GameState = struct {
     tone_hz: f32,
-    blue_offset: u32,
-    green_offset: u32,
     wave_pos: f32,
     target_fps: f32,
+    height_offset: u32,
+    width_offset: u32,
 };
 
 pub const InputType = enum {
@@ -49,7 +52,7 @@ pub const OffScreenBuffer = struct {
     pitch: usize,
 
     pub fn get_memory_size(self: *OffScreenBuffer) usize {
-        return self.window_width * self.window_height * @sizeOf(u32);
+        return self.window_width * self.window_height;
     }
 };
 
@@ -80,18 +83,22 @@ fn handle_keypress_event(game_state: *GameState, input: *Input) void {
                     // Todo:
                     // move -blue -green offset
                     game_state.tone_hz = 82;
+                    game_state.height_offset -= 1;
                 },
                 'a' => {
                     // move -blue offset
                     game_state.tone_hz = 440;
+                    game_state.width_offset -= 1;
                 },
                 's' => {
                     // move +blue +green offset
                     game_state.tone_hz = 880;
+                    game_state.height_offset += 1;
                 },
                 'd' => {
                     // move +green offset
                     game_state.tone_hz = 294;
+                    game_state.width_offset += 1;
                 },
                 else => {},
             }
@@ -100,38 +107,16 @@ fn handle_keypress_event(game_state: *GameState, input: *Input) void {
     }
 }
 
-// Todo: use/update pitch
-fn renderer(buffer: *OffScreenBuffer) void {
-    //var pixel_idx: usize = 0;
-    for (0..buffer.memory.len) |i| {
-        buffer.memory[i] = @intCast(i);
-    }
-}
-
-fn debug_sound(buffer: *OffScreenBuffer, sound_buffer: *SoundBuffer) void {
-    const pad = 16;
-    //const coefficent: f32 = @divTrunc(buffer.window_width, sound_buffer.buffer.len);
-
-    const width = buffer.window_width;
-    const height = buffer.window_height - pad;
-    const start_y = height - (2 * pad);
+fn renderer(game_state: *GameState, buffer: *OffScreenBuffer) void {
     var pixel_idx: usize = 0;
-    var sound_idx: usize = 0;
-    var pixel: u32 = 0;
-    var offset: usize = 0;
-    var sound_elem: u32 = 0;
+    for (0..buffer.window_width) |x| {
+        for (0..buffer.window_height) |y| {
+            pixel_idx = (x * buffer.window_height) + y;
 
-    for (start_y..height) |y| {
-        sound_elem = @abs(sound_buffer.buffer[sound_idx]);
-        pixel = 0xff0000 | sound_elem;
+            const blue = y + BlueOffset + game_state.width_offset;
+            const green = x + GreenOffset + game_state.height_offset;
 
-        sound_idx = (sound_idx + 1) % (sound_buffer.buffer.len - 1);
-        if (sound_idx == width) {
-            offset += 1;
-        }
-        for (offset..width) |x| {
-            pixel_idx = (y * width) + x;
-            buffer.memory[pixel_idx] = pixel;
+            buffer.memory[pixel_idx] = @intCast((green << 8) | blue);
         }
     }
 }
@@ -144,15 +129,15 @@ pub fn GameUpdateAndRenderer(
 ) void {
     if (!game_memory.is_initialized) {
         game_memory.game_state.tone_hz = 256;
-        game_memory.game_state.blue_offset = 0;
-        game_memory.game_state.green_offset = 0;
         game_memory.game_state.wave_pos = 0;
+
+        game_memory.game_state.height_offset = 0;
+        game_memory.game_state.width_offset = 0;
 
         game_memory.is_initialized = true;
     }
 
     handle_keypress_event(game_memory.game_state, input);
     fill_sound_buffer(game_memory.game_state, sound_buffer);
-    renderer(buffer);
-    debug_sound(buffer, sound_buffer);
+    renderer(game_memory.game_state, buffer);
 }

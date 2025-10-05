@@ -20,6 +20,8 @@ const MB = KiB * 1024;
 const GB = MB * 1024;
 const BitmapPad = 32;
 const TransientStorageSize = 1 * GB;
+const InitialWindowHeight = 480;
+const InitialWindowWidth = 600;
 // Todo: Get monitor refresh rate
 // Todo: Get current monitor
 const TargetFPS = 30;
@@ -50,8 +52,8 @@ pub fn main() !u8 {
     GlobalSoundBuffer.fade_duration_ms = 20;
     GlobalSoundBuffer.buffer = arena.allocator().alloc(i16, GlobalSoundBuffer.get_buffer_size(TargetFPS)) catch unreachable;
 
-    GlobalOffScreenBuffer.window_width = 600;
-    GlobalOffScreenBuffer.window_height = 480;
+    GlobalOffScreenBuffer.window_width = InitialWindowWidth;
+    GlobalOffScreenBuffer.window_height = InitialWindowHeight;
     GlobalOffScreenBuffer.pitch = 0;
     GlobalOffScreenBuffer.memory = arena.allocator().alloc(u32, GlobalOffScreenBuffer.get_memory_size()) catch unreachable;
 
@@ -308,8 +310,7 @@ fn render_game(
         @intCast(screen_buffer.window_width),
         @intCast(screen_buffer.window_height),
         BitmapPad,
-        // Todo: specify bytes_per_line
-        0,
+        @intCast(screen_buffer.window_width * @sizeOf(u32)),
     );
 
     _ = c.XPutImage(display, window, gc, image, 0, 0, 0, 0, @intCast(screen_buffer.window_width), @intCast(screen_buffer.window_height));
