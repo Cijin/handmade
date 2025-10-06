@@ -1,13 +1,13 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const handmade = @import("handmade.zig");
+const common = @import("common.zig");
+const dyn_lib = std.DynLib;
 const fs = std.fs;
 const thread = std.Thread;
 const mem = std.mem;
 const time = std.time;
 const math = std.math;
 const assert = std.debug.assert;
-
 const c = @cImport({
     @cInclude("X11/Xlib.h");
     @cInclude("X11/keysym.h");
@@ -15,6 +15,8 @@ const c = @cImport({
     @cInclude("pulse/simple.h");
     @cInclude("pulse/error.h");
 });
+
+//extern fn GameUpdateAndRenderer(*common.GameMemory, *common.Input, *common.OffScreenBuffer, *common.SoundBuffer) void;
 
 const KiB = 1024;
 const MB = KiB * 1024;
@@ -28,22 +30,33 @@ const InitialWindowWidth = 600;
 const TargetFPS = 30;
 const TargetMsPerFrame = 1000 / TargetFPS;
 
-var GlobalSoundBuffer: handmade.SoundBuffer = undefined;
-var GlobalOffScreenBuffer: handmade.OffScreenBuffer = undefined;
-var GlobalKeyboardInput: handmade.Input = undefined;
-
 pub fn main() !u8 {
+    var game_lib = dyn_lib.open("libhandmade.so") catch |err| {
+        std.debug.print("Failed to load handmade lib: {any}\n", .{err});
+        return 1;
+    };
+    defer game_lib.close();
+
+    const game_code = game_lib.lookup(
+        *fn (*common.GameMemory, *common.Input, *common.OffScreenBuffer, *common.SoundBuffer) void,
+        "GameUpdateAndRenderer",
+    );
+
+    var GlobalSoundBuffer: common.SoundBuffer = undefined;
+    var GlobalOffScreenBuffer: common.OffScreenBuffer = undefined;
+    var GlobalKeyboardInput: common.Input = undefined;
+
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
 
-    const game_memory = arena.allocator().create(handmade.GameMemory) catch unreachable;
-    game_memory.* = handmade.GameMemory{
+    const game_memory = arena.allocator().create(common.GameMemory) catch unreachable;
+    game_memory.* = common.GameMemory{
         .is_initialized = false,
-        .game_state = arena.allocator().create(handmade.GameState) catch unreachable,
+        .game_state = arena.allocator().create(common.GameState) catch unreachable,
         .transient_storage = arena.allocator().alloc(u8, TransientStorageSize) catch unreachable,
     };
 
-    GlobalKeyboardInput.type = handmade.InputType.Keyboard;
+    GlobalKeyboardInput.type = common.InputType.Keyboard;
 
     // 44k seems to work better than 48k
     GlobalSoundBuffer.sample_rate = 44100;
@@ -178,12 +191,14 @@ pub fn main() !u8 {
             }
         }
 
-        handmade.GameUpdateAndRenderer(
-            game_memory,
-            &GlobalKeyboardInput,
-            &GlobalOffScreenBuffer,
-            &GlobalSoundBuffer,
-        );
+        if (game_code) |dyn_gc| {
+            dyn_gc(
+                game_memory,
+                &GlobalKeyboardInput,
+                &GlobalOffScreenBuffer,
+                &GlobalSoundBuffer,
+            );
+        } else unreachable;
 
         // Todo: RDTSC() to get cycles/frame
         end_time = time.milliTimestamp();
@@ -255,12 +270,12 @@ fn platform_read_entire_file(allocator: mem.Allocator) !fs.File {
     return file;
 }
 
-fn write_audio(server: ?*c.struct_pa_simple, sound_buffer: *handmade.SoundBuffer) void {
+fn write_audio(server: ?*c.struct_pa_simple, sound_buffer: *common.SoundBuffer) void {
     var error_code: c_int = 0;
     const result = c.pa_simple_write(
         server,
         @ptrCast(sound_buffer.buffer),
-        sound_buffer.get_buffer_size(TargetFPS) * @sizeOf(i16),
+        sound_buffer.buffer.len * @sizeOf(i16),
         &error_code,
     );
     if (result < 0) {
@@ -270,8 +285,8 @@ fn write_audio(server: ?*c.struct_pa_simple, sound_buffer: *handmade.SoundBuffer
 }
 
 fn render_game(
-    screen_buffer: *handmade.OffScreenBuffer,
-    sound_buffer: *handmade.SoundBuffer,
+    screen_buffer: *common.OffScreenBuffer,
+    sound_buffer: *common.SoundBuffer,
     audio_pool: *thread.Pool,
     audio_server: ?*c.struct_pa_simple,
     display: ?*c.Display,

@@ -1,0 +1,59 @@
+pub const GameMemory = struct {
+    is_initialized: bool,
+    game_state: *GameState,
+    transient_storage: []u8,
+
+    pub fn init(self: *GameMemory) void {
+        self.game_state.tone_hz = 256;
+        self.game_state.wave_pos = 0;
+
+        self.game_state.height_offset = 0;
+        self.game_state.width_offset = 0;
+
+        self.is_initialized = true;
+    }
+};
+
+pub const GameState = struct {
+    tone_hz: f32,
+    wave_pos: f32,
+    target_fps: f32,
+    height_offset: u32,
+    width_offset: u32,
+};
+
+pub const InputType = enum {
+    Keyboard,
+    Gamepad,
+};
+
+pub const Input = struct {
+    type: InputType,
+    key: u32,
+    key_released: u32,
+    time: u32,
+};
+
+pub const SoundBuffer = struct {
+    buffer: []i16,
+    sample_rate: f32,
+    channels: f32,
+    tone_volume: f32,
+    fade_duration_ms: f32,
+
+    pub fn get_buffer_size(self: *SoundBuffer, target_fps: f32) usize {
+        const frame_duration_sec = 1.0 / target_fps;
+        return @intFromFloat(self.sample_rate * self.channels * frame_duration_sec);
+    }
+};
+
+pub const OffScreenBuffer = struct {
+    window_width: u32,
+    window_height: u32,
+    memory: []u32,
+    pitch: usize,
+
+    pub fn get_memory_size(self: *OffScreenBuffer) usize {
+        return self.window_width * self.window_height;
+    }
+};

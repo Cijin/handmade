@@ -26,6 +26,16 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const handmade_lib = b.addLibrary(.{
+        .name = "handmade",
+        .linkage = .dynamic,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/handmade.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
     // This creates another `std.Build.Step.Compile`, but this one builds an executable
     // rather than a static library.
     const exe = b.addExecutable(.{
@@ -33,8 +43,10 @@ pub fn build(b: *std.Build) void {
         .root_module = exe_mod,
     });
 
+    exe.linkLibrary(handmade_lib);
     // Todo: static linking?
     exe.root_module.linkSystemLibrary("X11", .{ .needed = true });
+    // Todo: dynamic linking?
     exe.root_module.linkSystemLibrary("pulse-simple", .{ .weak = true });
     exe.root_module.link_libc = true;
 
