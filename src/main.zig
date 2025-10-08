@@ -16,8 +16,7 @@ const c = @cImport({
     @cInclude("pulse/error.h");
 });
 
-//extern fn GameUpdateAndRenderer(*common.GameMemory, *common.Input, *common.OffScreenBuffer, *common.SoundBuffer) void;
-
+const GameUpdateAndRendererFn = *fn (*common.GameMemory, *common.Input, *common.OffScreenBuffer, *common.SoundBuffer) callconv(.c) void;
 const KiB = 1024;
 const MB = KiB * 1024;
 const GB = MB * 1024;
@@ -31,17 +30,6 @@ const TargetFPS = 30;
 const TargetMsPerFrame = 1000 / TargetFPS;
 
 pub fn main() !u8 {
-    var game_lib = dyn_lib.open("libhandmade.so") catch |err| {
-        std.debug.print("Failed to load handmade lib: {any}\n", .{err});
-        return 1;
-    };
-    defer game_lib.close();
-
-    const game_code = game_lib.lookup(
-        *fn (*common.GameMemory, *common.Input, *common.OffScreenBuffer, *common.SoundBuffer) void,
-        "GameUpdateAndRenderer",
-    );
-
     var GlobalSoundBuffer: common.SoundBuffer = undefined;
     var GlobalOffScreenBuffer: common.OffScreenBuffer = undefined;
     var GlobalKeyboardInput: common.Input = undefined;
@@ -157,7 +145,25 @@ pub fn main() !u8 {
     var fps: i64 = 0;
     var time_per_frame: i64 = 0;
     var end_time: i64 = 0;
+    var load_counter: u32 = 0;
+    var dynamic_game_code: ?GameUpdateAndRendererFn = null;
+    var game_lib = load_game_lib() catch {
+        return 1;
+    };
+    defer game_lib.close();
+
     while (!quit) {
+        load_counter += 1;
+        if (load_counter > 120) {
+            game_lib.close();
+            game_lib = load_game_lib() catch {
+                return 1;
+            };
+
+            dynamic_game_code = game_lib.lookup(GameUpdateAndRendererFn, "GameUpdateAndRenderer");
+            load_counter = 0;
+        }
+
         while (c.XPending(display) > 0) {
             _ = c.XNextEvent(display, &event);
             switch (event.type) {
@@ -191,14 +197,9 @@ pub fn main() !u8 {
             }
         }
 
-        if (game_code) |dyn_gc| {
-            dyn_gc(
-                game_memory,
-                &GlobalKeyboardInput,
-                &GlobalOffScreenBuffer,
-                &GlobalSoundBuffer,
-            );
-        } else unreachable;
+        if (dynamic_game_code) |dyn_gc| {
+            dyn_gc(game_memory, &GlobalKeyboardInput, &GlobalOffScreenBuffer, &GlobalSoundBuffer);
+        }
 
         // Todo: RDTSC() to get cycles/frame
         end_time = time.milliTimestamp();
@@ -270,6 +271,11 @@ fn platform_read_entire_file(allocator: mem.Allocator) !fs.File {
     return file;
 }
 
+fn copyFile(from: []const u8, to: []const u8) !void {
+    const pwd = fs.cwd();
+    return fs.Dir.copyFile(pwd, from, pwd, to, .{});
+}
+
 fn write_audio(server: ?*c.struct_pa_simple, sound_buffer: *common.SoundBuffer) void {
     var error_code: c_int = 0;
     const result = c.pa_simple_write(
@@ -315,4 +321,19 @@ fn render_game(
     );
 
     _ = c.XPutImage(display, window, gc, image, 0, 0, 0, 0, @intCast(screen_buffer.window_width), @intCast(screen_buffer.window_height));
+}
+
+fn load_game_lib() !dyn_lib {
+    // Todo: point to build path (cwd)
+    copyFile("libhandmade.so", "temp_handmade.so") catch |err| {
+        std.debug.print("Failed to copy handmade lib: {any}\n", .{err});
+        return err;
+    };
+
+    const game_lib = dyn_lib.open("temp_handmade.so") catch |err| {
+        std.debug.print("Failed to load handmade lib: {any}\n", .{err});
+        return err;
+    };
+
+    return game_lib;
 }
