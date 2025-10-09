@@ -154,6 +154,7 @@ pub fn main() !u8 {
     var load_counter: u32 = 0;
     var dynamic_game_code: ?GameUpdateAndRendererFn = null;
     var game_lib = load_game_lib(arena.allocator()) catch {
+        std.debug.print("Exiting\n", .{});
         return 1;
     };
     defer game_lib.close();
@@ -343,8 +344,7 @@ fn load_game_lib(allocator: mem.Allocator) !dyn_lib {
     };
 
     const cwd = fs.cwd();
-    const real_path = try cwd.realpathAlloc(allocator, "templ_handmade.so");
-    std.debug.print("CWD: {s}\n", .{real_path});
+    const real_path = try cwd.realpathAlloc(allocator, "temp_handmade.so");
 
     const game_lib = dyn_lib.open(real_path) catch |err| {
         std.debug.print("Failed to load handmade lib: {any}\n", .{err});

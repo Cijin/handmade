@@ -4,6 +4,7 @@ const math = std.math;
 const assert = std.debug.assert;
 
 const BlueOffset = 0x0000ff;
+const RedOffset = 0xff0000;
 const GreenOffset = 0x00ff00;
 
 fn fill_sound_buffer(game_state: *common.GameState, sound_buffer: *common.SoundBuffer) void {
@@ -59,7 +60,7 @@ fn renderer(game_state: *common.GameState, buffer: *common.OffScreenBuffer) void
         for (0..buffer.window_height) |y| {
             pixel_idx = (x * buffer.window_height) + y;
 
-            const blue = y + BlueOffset + game_state.width_offset;
+            const blue = y + RedOffset + game_state.width_offset;
             const green = x + GreenOffset + game_state.height_offset;
 
             buffer.memory[pixel_idx] = @intCast((green << 8) | blue);
