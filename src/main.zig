@@ -16,7 +16,13 @@ const c = @cImport({
     @cInclude("pulse/error.h");
 });
 
-const GameUpdateAndRendererFn = *fn (*common.GameMemory, *common.Input, *common.OffScreenBuffer, *common.SoundBuffer) callconv(.c) void;
+const GameUpdateAndRendererFn = *fn (
+    *common.GameMemory,
+    *common.Input,
+    *common.OffScreenBuffer,
+    *common.SoundBuffer,
+) callconv(.c) void;
+
 const KiB = 1024;
 const MB = KiB * 1024;
 const GB = MB * 1024;
@@ -147,7 +153,7 @@ pub fn main() !u8 {
     var end_time: i64 = 0;
     var load_counter: u32 = 0;
     var dynamic_game_code: ?GameUpdateAndRendererFn = null;
-    var game_lib = load_game_lib() catch {
+    var game_lib = load_game_lib(arena.allocator()) catch {
         return 1;
     };
     defer game_lib.close();
@@ -156,7 +162,7 @@ pub fn main() !u8 {
         load_counter += 1;
         if (load_counter > 120) {
             game_lib.close();
-            game_lib = load_game_lib() catch {
+            game_lib = load_game_lib(arena.allocator()) catch {
                 return 1;
             };
 
@@ -272,8 +278,15 @@ fn platform_read_entire_file(allocator: mem.Allocator) !fs.File {
 }
 
 fn copyFile(from: []const u8, to: []const u8) !void {
-    const pwd = fs.cwd();
-    return fs.Dir.copyFile(pwd, from, pwd, to, .{});
+    const cwd = fs.cwd();
+
+    cwd.access(to, .{ .mode = .read_only }) catch |err| {
+        if (err == error.FileNotFound) {
+            _ = try cwd.createFile(to, .{});
+        }
+    };
+
+    return cwd.copyFile(from, cwd, to, .{});
 }
 
 fn write_audio(server: ?*c.struct_pa_simple, sound_buffer: *common.SoundBuffer) void {
@@ -323,14 +336,17 @@ fn render_game(
     _ = c.XPutImage(display, window, gc, image, 0, 0, 0, 0, @intCast(screen_buffer.window_width), @intCast(screen_buffer.window_height));
 }
 
-fn load_game_lib() !dyn_lib {
-    // Todo: point to build path (cwd)
+fn load_game_lib(allocator: mem.Allocator) !dyn_lib {
     copyFile("libhandmade.so", "temp_handmade.so") catch |err| {
         std.debug.print("Failed to copy handmade lib: {any}\n", .{err});
         return err;
     };
 
-    const game_lib = dyn_lib.open("temp_handmade.so") catch |err| {
+    const cwd = fs.cwd();
+    const real_path = try cwd.realpathAlloc(allocator, "templ_handmade.so");
+    std.debug.print("CWD: {s}\n", .{real_path});
+
+    const game_lib = dyn_lib.open(real_path) catch |err| {
         std.debug.print("Failed to load handmade lib: {any}\n", .{err});
         return err;
     };

@@ -39,7 +39,7 @@ pub fn build(b: *std.Build) void {
     // This creates another `std.Build.Step.Compile`, but this one builds an executable
     // rather than a static library.
     const exe = b.addExecutable(.{
-        .name = "handmade",
+        .name = "handmade_exe",
         .root_module = exe_mod,
     });
 
