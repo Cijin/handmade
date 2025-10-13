@@ -23,6 +23,9 @@ const GameUpdateAndRendererFn = *fn (
     *common.SoundBuffer,
 ) callconv(.c) void;
 
+var SourceModifiedAt: i128 = 0;
+const SourceSo = "libhandmade.so";
+const TempSo = "temp_handmade.so";
 const KiB = 1024;
 const MB = KiB * 1024;
 const GB = MB * 1024;
@@ -145,30 +148,32 @@ pub fn main() !u8 {
     // window will not show up without sync
     _ = c.XSync(display, 0);
 
+    var game_lib = load_game_lib(arena.allocator()) catch {
+        std.debug.print("Exiting\n", .{});
+        return 1;
+    };
+    var dynamic_game_code = game_lib.lookup(
+        GameUpdateAndRendererFn,
+        "GameUpdateAndRenderer",
+    );
+    errdefer game_lib.close();
+
     var quit = false;
     var event: c.XEvent = undefined;
     var start_time = time.milliTimestamp();
     var fps: i64 = 0;
     var time_per_frame: i64 = 0;
     var end_time: i64 = 0;
-    var load_counter: u32 = 0;
-    var dynamic_game_code: ?GameUpdateAndRendererFn = null;
-    var game_lib = load_game_lib(arena.allocator()) catch {
-        std.debug.print("Exiting\n", .{});
-        return 1;
-    };
-    defer game_lib.close();
-
     while (!quit) {
-        load_counter += 1;
-        if (load_counter > 120) {
+        if (game_code_changed()) {
             game_lib.close();
+
             game_lib = load_game_lib(arena.allocator()) catch {
+                std.debug.print("Failed to load lib\n", .{});
                 return 1;
             };
 
             dynamic_game_code = game_lib.lookup(GameUpdateAndRendererFn, "GameUpdateAndRenderer");
-            load_counter = 0;
         }
 
         while (c.XPending(display) > 0) {
@@ -278,16 +283,24 @@ fn platform_read_entire_file(allocator: mem.Allocator) !fs.File {
     return file;
 }
 
-fn copyFile(from: []const u8, to: []const u8) !void {
+fn game_code_changed() bool {
     const cwd = fs.cwd();
 
-    cwd.access(to, .{ .mode = .read_only }) catch |err| {
-        if (err == error.FileNotFound) {
-            _ = try cwd.createFile(to, .{});
-        }
+    const stat = cwd.statFile(SourceSo) catch |err| {
+        std.debug.print("Failed to get source object file stat. Will retry next frame. Error={any}\n", .{err});
+        return false;
     };
 
-    return cwd.copyFile(from, cwd, to, .{});
+    std.debug.print("ModifiedAt: {d}\n", .{stat.mtime});
+    return stat.mtime != SourceModifiedAt;
+}
+
+fn copyFile(from: []const u8, to: []const u8) !void {
+    const cwd = fs.cwd();
+    try cwd.copyFile(from, cwd, to, .{});
+
+    const stat = try cwd.statFile(from);
+    SourceModifiedAt = stat.mtime;
 }
 
 fn write_audio(server: ?*c.struct_pa_simple, sound_buffer: *common.SoundBuffer) void {
@@ -338,14 +351,13 @@ fn render_game(
 }
 
 fn load_game_lib(allocator: mem.Allocator) !dyn_lib {
-    copyFile("libhandmade.so", "temp_handmade.so") catch |err| {
+    copyFile(SourceSo, TempSo) catch |err| {
         std.debug.print("Failed to copy handmade lib: {any}\n", .{err});
         return err;
     };
 
     const cwd = fs.cwd();
-    const real_path = try cwd.realpathAlloc(allocator, "temp_handmade.so");
-
+    const real_path = try cwd.realpathAlloc(allocator, TempSo);
     const game_lib = dyn_lib.open(real_path) catch |err| {
         std.debug.print("Failed to load handmade lib: {any}\n", .{err});
         return err;
