@@ -297,7 +297,7 @@ fn game_code_changed() bool {
 
 fn copyFile(from: []const u8, to: []const u8) !void {
     const cwd = fs.cwd();
-    try cwd.copyFile(from, cwd, to, .{});
+    try fs.Dir.copyFile(cwd, from, cwd, to, .{});
 
     const stat = try cwd.statFile(from);
     SourceModifiedAt = stat.mtime;
