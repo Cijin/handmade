@@ -156,7 +156,7 @@ pub fn main() !u8 {
         GameUpdateAndRendererFn,
         "GameUpdateAndRenderer",
     );
-    errdefer game_lib.close();
+    defer game_lib.close();
 
     var quit = false;
     var event: c.XEvent = undefined;
