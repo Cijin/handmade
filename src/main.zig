@@ -25,6 +25,7 @@ const GameUpdateAndRendererFn = *fn (
 
 var SourceModifiedAt: i128 = 0;
 const MaxRetryAttempt = 10;
+const GameCode = "src/handmade.zig";
 const SourceSo = "libhandmade.so";
 const TempSo = "temp_handmade.so";
 const KiB = 1024;
@@ -332,7 +333,7 @@ fn render_game(
 fn game_code_changed() bool {
     const cwd = fs.cwd();
 
-    const stat = cwd.statFile(SourceSo) catch |err| {
+    const stat = cwd.statFile(GameCode) catch |err| {
         std.debug.print("Failed to get source object file stat. Will retry next frame. Error={any}\n", .{err});
         return false;
     };
@@ -343,26 +344,36 @@ fn game_code_changed() bool {
 
 fn copyFile(from: []const u8, to: []const u8) !void {
     const cwd = fs.cwd();
-    try fs.Dir.copyFile(cwd, from, cwd, to, .{});
 
-    const stat = try cwd.statFile(from);
+    try cwd.copyFile(from, cwd, to, .{});
+
+    const stat = try cwd.statFile(GameCode);
     SourceModifiedAt = stat.mtime;
 }
 
 fn load_game_lib(allocator: mem.Allocator) !dyn_lib {
     var retry_attempt: u8 = 0;
 
+    // Todo:
+    // Maybe keep a second temp file and delete the other one when switching
+    // atomic copies create files if they don't exist
+    // OR
+    // Maybe just delete the temp file before copy
+    // OR
+    // Check how load lib behaves without copy
+    const cwd = fs.cwd();
+
+    const build_result = try build_lib(allocator, cwd);
+    if (build_result != 0) {
+        return error.Error;
+    }
+
     copyFile(SourceSo, TempSo) catch |err| {
         std.debug.print("Failed to copy handmade lib: {any}\n", .{err});
         return err;
     };
 
-    _ = std.c.fsync(@intCast(fs.cwd().fd));
-
-    const cwd = fs.cwd();
     const real_path = try fs.Dir.realpathAlloc(cwd, allocator, TempSo);
-
-    std.debug.print("{s}\n", .{real_path});
 
     var game_lib: ?dyn_lib = null;
     var lib_err: dyn_lib.Error = undefined;
@@ -378,4 +389,19 @@ fn load_game_lib(allocator: mem.Allocator) !dyn_lib {
     }
 
     return lib_err;
+}
+
+fn build_lib(allocator: mem.Allocator, cwd: fs.Dir) !u8 {
+    const result = try std.process.Child.run(.{
+        .allocator = allocator,
+        .argv = &[_][]const u8{
+            "zig",
+            "build-lib",
+            GameCode,
+            "-dynamic",
+        },
+        .cwd_dir = cwd,
+    });
+
+    return result.term.Exited;
 }
