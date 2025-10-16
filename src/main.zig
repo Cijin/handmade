@@ -24,6 +24,7 @@ const GameUpdateAndRendererFn = *fn (
 ) callconv(.c) void;
 
 var SourceModifiedAt: i128 = 0;
+const MaxRetryAttempt = 10;
 const SourceSo = "libhandmade.so";
 const TempSo = "temp_handmade.so";
 const KiB = 1024;
@@ -156,7 +157,6 @@ pub fn main() !u8 {
         GameUpdateAndRendererFn,
         "GameUpdateAndRenderer",
     );
-    defer game_lib.close();
 
     var quit = false;
     var event: c.XEvent = undefined;
@@ -169,7 +169,6 @@ pub fn main() !u8 {
             game_lib.close();
 
             game_lib = load_game_lib(arena.allocator()) catch {
-                std.debug.print("Failed to load lib\n", .{});
                 return 1;
             };
 
@@ -240,15 +239,15 @@ pub fn main() !u8 {
         assert(time_per_frame != 0);
         fps = @divTrunc(1000, time_per_frame);
 
-        std.debug.print("MsPerFrame: {d}\t FPS: {d}\t TargetFPS: {d}\t TargetMsPerFrame: {d}\n", .{
+        std.debug.print("MsPerFrame: {d}\t FPS: {d}\t TargetFPS: {d}\n", .{
             time_per_frame,
             fps,
             TargetFPS,
-            TargetMsPerFrame,
         });
         start_time = end_time;
     }
 
+    game_lib.close();
     return 0;
 }
 
@@ -281,26 +280,6 @@ fn platform_read_entire_file(allocator: mem.Allocator) !fs.File {
     });
 
     return file;
-}
-
-fn game_code_changed() bool {
-    const cwd = fs.cwd();
-
-    const stat = cwd.statFile(SourceSo) catch |err| {
-        std.debug.print("Failed to get source object file stat. Will retry next frame. Error={any}\n", .{err});
-        return false;
-    };
-
-    std.debug.print("ModifiedAt: {d}\n", .{stat.mtime});
-    return stat.mtime != SourceModifiedAt;
-}
-
-fn copyFile(from: []const u8, to: []const u8) !void {
-    const cwd = fs.cwd();
-    try fs.Dir.copyFile(cwd, from, cwd, to, .{});
-
-    const stat = try cwd.statFile(from);
-    SourceModifiedAt = stat.mtime;
 }
 
 fn write_audio(server: ?*c.struct_pa_simple, sound_buffer: *common.SoundBuffer) void {
@@ -350,18 +329,53 @@ fn render_game(
     _ = c.XPutImage(display, window, gc, image, 0, 0, 0, 0, @intCast(screen_buffer.window_width), @intCast(screen_buffer.window_height));
 }
 
+fn game_code_changed() bool {
+    const cwd = fs.cwd();
+
+    const stat = cwd.statFile(SourceSo) catch |err| {
+        std.debug.print("Failed to get source object file stat. Will retry next frame. Error={any}\n", .{err});
+        return false;
+    };
+
+    std.debug.print("ModifiedAt: {d}\n", .{stat.mtime});
+    return stat.mtime != SourceModifiedAt;
+}
+
+fn copyFile(from: []const u8, to: []const u8) !void {
+    const cwd = fs.cwd();
+    try fs.Dir.copyFile(cwd, from, cwd, to, .{});
+
+    const stat = try cwd.statFile(from);
+    SourceModifiedAt = stat.mtime;
+}
+
 fn load_game_lib(allocator: mem.Allocator) !dyn_lib {
+    var retry_attempt: u8 = 0;
+
     copyFile(SourceSo, TempSo) catch |err| {
         std.debug.print("Failed to copy handmade lib: {any}\n", .{err});
         return err;
     };
 
-    const cwd = fs.cwd();
-    const real_path = try cwd.realpathAlloc(allocator, TempSo);
-    const game_lib = dyn_lib.open(real_path) catch |err| {
-        std.debug.print("Failed to load handmade lib: {any}\n", .{err});
-        return err;
-    };
+    _ = std.c.fsync(@intCast(fs.cwd().fd));
 
-    return game_lib;
+    const cwd = fs.cwd();
+    const real_path = try fs.Dir.realpathAlloc(cwd, allocator, TempSo);
+
+    std.debug.print("{s}\n", .{real_path});
+
+    var game_lib: ?dyn_lib = null;
+    var lib_err: dyn_lib.Error = undefined;
+    while (retry_attempt <= MaxRetryAttempt) : (retry_attempt += 1) {
+        game_lib = dyn_lib.open(real_path) catch |err| {
+            std.debug.print("Failed to load handmade lib: {any}\n", .{err});
+            lib_err = err;
+
+            thread.sleep(1000000000);
+            continue;
+        };
+        return game_lib.?;
+    }
+
+    return lib_err;
 }
