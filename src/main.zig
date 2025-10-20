@@ -35,6 +35,8 @@ const BitmapPad = 32;
 const TransientStorageSize = 1 * GB;
 const InitialWindowHeight = 480;
 const InitialWindowWidth = 600;
+var PlaybackIdx: u32 = 0;
+var RecordingIdx: u32 = 0;
 // Todo: Get monitor refresh rate
 // Todo: Get current monitor
 const TargetFPS = 30;
@@ -44,6 +46,17 @@ pub fn main() !u8 {
     var GlobalSoundBuffer: common.SoundBuffer = undefined;
     var GlobalOffScreenBuffer: common.OffScreenBuffer = undefined;
     var GlobalKeyboardInput: common.Input = undefined;
+    var GlobalX11State = common.X11State{
+        .recording_file = null,
+        .recording_idx = 0,
+        .playback_file = null,
+        .playback_idx = 0,
+    };
+    GlobalX11State.init() catch |err| {
+        std.debug.print("Failed to init X11State: {any}\n", .{err});
+        return 1;
+    };
+    defer GlobalX11State.deinit();
 
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
@@ -59,7 +72,7 @@ pub fn main() !u8 {
 
     // 44k seems to work better than 48k
     GlobalSoundBuffer.sample_rate = 44100;
-    GlobalSoundBuffer.tone_volume = 1000;
+    GlobalSoundBuffer.tone_volume = 0;
     GlobalSoundBuffer.channels = 2;
     GlobalSoundBuffer.fade_duration_ms = 20;
     GlobalSoundBuffer.buffer = arena.allocator().alloc(i16, GlobalSoundBuffer.get_buffer_size(TargetFPS)) catch unreachable;
@@ -143,7 +156,7 @@ pub fn main() !u8 {
     _ = c.XStoreName(display, window, "Handmade");
 
     // you will not get events without this
-    _ = c.XSelectInput(display, window, c.KeyPressMask | c.StructureNotifyMask);
+    _ = c.XSelectInput(display, window, c.KeyPressMask | c.KeyReleaseMask | c.StructureNotifyMask);
 
     _ = c.XMapWindow(display, window);
 
@@ -184,13 +197,30 @@ pub fn main() !u8 {
                     if (keysym == c.XK_Escape) {
                         quit = true;
                         break;
+                    } else if (keysym == 'l') {
+                        if (RecordingIdx == 0) {
+                            RecordingIdx = 1;
+                            PlaybackIdx = 0;
+                            std.debug.print("Recording input...\n", .{});
+                        } else {
+                            RecordingIdx = 0;
+                            PlaybackIdx = 1;
+
+                            std.debug.print("Playback recording.\n", .{});
+                        }
                     } else {
-                        GlobalKeyboardInput.key = @intCast(keysym);
+                        if (RecordingIdx == 1) {
+                            GlobalKeyboardInput.key = @intCast(keysym);
+                            GlobalX11State.write(&GlobalKeyboardInput);
+                        } else {
+                            GlobalKeyboardInput.key = @intCast(keysym);
+                        }
                     }
                 },
                 c.KeyRelease => {
                     const keysym = c.XLookupKeysym(&event.xkey, 0);
                     GlobalKeyboardInput.key_released = @intCast(keysym);
+                    GlobalKeyboardInput.key = 0;
                     GlobalKeyboardInput.time = @intCast(event.xkey.time);
                 },
                 // Todo: handle window destroyed or prematurely closed
@@ -210,6 +240,12 @@ pub fn main() !u8 {
         }
 
         if (dynamic_game_code) |dyn_gc| {
+            if (PlaybackIdx == 1) {
+                GlobalX11State.read(&GlobalKeyboardInput) catch |err| {
+                    std.debug.print("Failed to read playback file: {any}\n", .{err});
+                    return 1;
+                };
+            }
             dyn_gc(game_memory, &GlobalKeyboardInput, &GlobalOffScreenBuffer, &GlobalSoundBuffer);
         }
 
@@ -240,11 +276,11 @@ pub fn main() !u8 {
         assert(time_per_frame != 0);
         fps = @divTrunc(1000, time_per_frame);
 
-        std.debug.print("MsPerFrame: {d}\t FPS: {d}\t TargetFPS: {d}\n", .{
-            time_per_frame,
-            fps,
-            TargetFPS,
-        });
+        //std.debug.print("MsPerFrame: {d}\t FPS: {d}\t TargetFPS: {d}\n", .{
+        //    time_per_frame,
+        //    fps,
+        //    TargetFPS,
+        //});
         start_time = end_time;
     }
 
@@ -338,7 +374,7 @@ fn game_code_changed() bool {
         return false;
     };
 
-    std.debug.print("ModifiedAt: {d}\n", .{stat.mtime});
+    //std.debug.print("ModifiedAt: {d}\n", .{stat.mtime});
     return stat.mtime != SourceModifiedAt;
 }
 
