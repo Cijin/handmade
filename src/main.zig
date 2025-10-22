@@ -35,28 +35,17 @@ const BitmapPad = 32;
 const TransientStorageSize = 1 * GB;
 const InitialWindowHeight = 480;
 const InitialWindowWidth = 600;
-var PlaybackIdx: u32 = 0;
-var RecordingIdx: u32 = 0;
 // Todo: Get monitor refresh rate
 // Todo: Get current monitor
 const TargetFPS = 30;
 const TargetMsPerFrame = 1000 / TargetFPS;
 
 pub fn main() !u8 {
+    var run_playback: bool = false;
+    var is_recording: bool = false;
+
     var GlobalSoundBuffer: common.SoundBuffer = undefined;
     var GlobalOffScreenBuffer: common.OffScreenBuffer = undefined;
-    var GlobalKeyboardInput: common.Input = undefined;
-    var GlobalX11State = common.X11State{
-        .recording_file = null,
-        .recording_idx = 0,
-        .playback_file = null,
-        .playback_idx = 0,
-    };
-    GlobalX11State.init() catch |err| {
-        std.debug.print("Failed to init X11State: {any}\n", .{err});
-        return 1;
-    };
-    defer GlobalX11State.deinit();
 
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
@@ -68,7 +57,25 @@ pub fn main() !u8 {
         .transient_storage = arena.allocator().alloc(u8, TransientStorageSize) catch unreachable,
     };
 
-    GlobalKeyboardInput.type = common.InputType.Keyboard;
+    var GlobalLinuxState = arena.allocator().create(common.LinuxState) catch unreachable;
+    GlobalLinuxState.* = common.LinuxState{
+        .filename = "game_state.hmh",
+        .recording_file = null,
+        .playback_file = null,
+        .game_input = arena.allocator().create(common.Input) catch unreachable,
+        .game_memory = game_memory,
+    };
+    GlobalLinuxState.game_input.* = common.Input{
+        .type = .Keyboard,
+        .key = 0,
+        .key_released = 0,
+        .time = 0,
+    };
+    GlobalLinuxState.init() catch |err| {
+        std.debug.print("Failed to init LinuxState: {any}\n", .{err});
+        return 1;
+    };
+    defer GlobalLinuxState.deinit();
 
     // 44k seems to work better than 48k
     GlobalSoundBuffer.sample_rate = 44100;
@@ -198,30 +205,30 @@ pub fn main() !u8 {
                         quit = true;
                         break;
                     } else if (keysym == 'l') {
-                        if (RecordingIdx == 0) {
-                            RecordingIdx = 1;
-                            PlaybackIdx = 0;
+                        if (!is_recording) {
+                            is_recording = true;
+                            run_playback = false;
                             std.debug.print("Recording input...\n", .{});
                         } else {
-                            RecordingIdx = 0;
-                            PlaybackIdx = 1;
+                            is_recording = false;
+                            run_playback = true;
 
-                            std.debug.print("Playback recording.\n", .{});
+                            std.debug.print("Playback recording...\n", .{});
                         }
                     } else {
-                        if (RecordingIdx == 1) {
-                            GlobalKeyboardInput.key = @intCast(keysym);
-                            GlobalX11State.write(&GlobalKeyboardInput);
+                        if (is_recording) {
+                            GlobalLinuxState.game_input.key = @intCast(keysym);
+                            write_linux_state(GlobalLinuxState);
                         } else {
-                            GlobalKeyboardInput.key = @intCast(keysym);
+                            GlobalLinuxState.game_input.key = @intCast(keysym);
                         }
                     }
                 },
                 c.KeyRelease => {
                     const keysym = c.XLookupKeysym(&event.xkey, 0);
-                    GlobalKeyboardInput.key_released = @intCast(keysym);
-                    GlobalKeyboardInput.key = 0;
-                    GlobalKeyboardInput.time = @intCast(event.xkey.time);
+                    GlobalLinuxState.game_input.key_released = @intCast(keysym);
+                    GlobalLinuxState.game_input.key = 0;
+                    GlobalLinuxState.game_input.time = @intCast(event.xkey.time);
                 },
                 // Todo: handle window destroyed or prematurely closed
                 // so that it can be restarted if it was unintended
@@ -240,13 +247,13 @@ pub fn main() !u8 {
         }
 
         if (dynamic_game_code) |dyn_gc| {
-            if (PlaybackIdx == 1) {
-                GlobalX11State.read(&GlobalKeyboardInput) catch |err| {
+            if (run_playback) {
+                read_linux_state(GlobalLinuxState) catch |err| {
                     std.debug.print("Failed to read playback file: {any}\n", .{err});
                     return 1;
                 };
             }
-            dyn_gc(game_memory, &GlobalKeyboardInput, &GlobalOffScreenBuffer, &GlobalSoundBuffer);
+            dyn_gc(game_memory, GlobalLinuxState.game_input, &GlobalOffScreenBuffer, &GlobalSoundBuffer);
         }
 
         // Todo: RDTSC() to get cycles/frame
@@ -366,6 +373,30 @@ fn render_game(
     _ = c.XPutImage(display, window, gc, image, 0, 0, 0, 0, @intCast(screen_buffer.window_width), @intCast(screen_buffer.window_height));
 }
 
+fn read_linux_state(linux_state: *common.LinuxState) !void {
+    // Todo: can stop playback if reached EOF
+    const current_pos = try linux_state.playback_file.?.getPos();
+    const stat = try linux_state.playback_file.?.stat();
+
+    if (current_pos == stat.size) {
+        try linux_state.playback_file.?.seekTo(0);
+    }
+
+    var buffer: [@sizeOf(common.Input)]u8 = undefined;
+    _ = linux_state.playback_file.?.read(&buffer) catch |err| {
+        std.debug.print("Failed to read input: {any}\n", .{err});
+    };
+
+    linux_state.game_input.* = mem.bytesToValue(common.Input, &buffer);
+}
+
+fn write_linux_state(linux_state: *common.LinuxState) void {
+    // Todo: what about over-writing existing recordings
+    _ = linux_state.recording_file.?.write(mem.asBytes(linux_state.game_input)) catch |err| {
+        std.debug.print("Failed to write input: {any}\n", .{err});
+    };
+}
+
 fn game_code_changed() bool {
     const cwd = fs.cwd();
 
@@ -374,7 +405,6 @@ fn game_code_changed() bool {
         return false;
     };
 
-    //std.debug.print("ModifiedAt: {d}\n", .{stat.mtime});
     return stat.mtime != SourceModifiedAt;
 }
 
@@ -435,6 +465,7 @@ fn build_lib(allocator: mem.Allocator, cwd: fs.Dir) !u8 {
             "build-lib",
             GameCode,
             "-dynamic",
+            "-ODebug",
         },
         .cwd_dir = cwd,
     });

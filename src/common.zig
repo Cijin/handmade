@@ -37,60 +37,38 @@ pub const InputType = enum {
 };
 
 pub const Input = struct {
-    type: InputType,
+    type: InputType = .Keyboard,
     key: u32,
     key_released: u32,
     time: u32,
 };
 
-pub const X11State = struct {
+pub const LinuxState = struct {
+    filename: []const u8,
     recording_file: ?fs.File,
-    recording_idx: u32,
-
     playback_file: ?fs.File,
-    playback_idx: u32,
 
-    pub fn init(self: *X11State) !void {
-        self.recording_file = fs.cwd().openFile("game_state.hmh", .{ .mode = .write_only }) catch |err| {
+    game_input: *Input,
+    game_memory: *GameMemory,
+
+    pub fn init(self: *LinuxState) !void {
+        self.recording_file = fs.cwd().openFile(self.filename, .{ .mode = .write_only }) catch |err| {
             // Todo: this can be done better
             if (err == fs.File.OpenError.FileNotFound) {
-                self.recording_file = try fs.cwd().createFile("game_state.hmh", .{});
-                self.playback_file = try fs.cwd().openFile("game_state.hmh", .{ .mode = .read_only });
+                self.recording_file = try fs.cwd().createFile(self.filename, .{});
+                self.playback_file = try fs.cwd().openFile(self.filename, .{ .mode = .read_only });
                 return;
             } else {
                 return err;
             }
         };
 
-        self.playback_file = try fs.cwd().openFile("game_state.hmh", .{ .mode = .read_only });
+        self.playback_file = try fs.cwd().openFile(self.filename, .{ .mode = .read_only });
     }
 
-    pub fn deinit(self: *X11State) void {
+    pub fn deinit(self: *LinuxState) void {
         self.recording_file.?.close();
         self.playback_file.?.close();
-    }
-
-    pub fn read(self: *X11State, input: *Input) !void {
-        // Todo: can stop playback if reached EOF
-        const current_pos = try self.playback_file.?.getPos();
-        const stat = try self.playback_file.?.stat();
-
-        if (current_pos == stat.size) {
-            try self.playback_file.?.seekTo(0);
-        }
-
-        var buffer: [@sizeOf(Input)]u8 = undefined;
-        _ = self.playback_file.?.read(&buffer) catch |err| {
-            std.debug.print("Failed to read input: {any}\n", .{err});
-        };
-
-        input.* = mem.bytesToValue(Input, &buffer);
-    }
-
-    pub fn write(self: *X11State, input: *Input) void {
-        _ = self.recording_file.?.write(mem.asBytes(input)) catch |err| {
-            std.debug.print("Failed to write input: {any}\n", .{err});
-        };
     }
 };
 

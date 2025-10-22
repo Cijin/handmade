@@ -1,0 +1,25 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "CodeLLDB",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/zig-out/bin/handmade",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "stopOnEntry": false,
+            "terminal": "integrated",
+            "preLaunchTask": "zig build",
+            "env": {
+                "DISPLAY": "${env:DISPLAY}"
+            },
+            "initCommands": [
+                "settings set target.process.stop-on-exec false",
+                "settings set stop-disassembly-display never"
+            ],
+            "expressions": "native",
+            "breakpointMode": "path"
+        }
+    ]
+}
