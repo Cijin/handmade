@@ -49,7 +49,7 @@ pub const LinuxState = struct {
     playback_file: ?fs.File,
 
     game_input: *Input,
-    game_memory: *GameMemory,
+    game_state: *GameState,
 
     pub fn init(self: *LinuxState) !void {
         self.recording_file = fs.cwd().openFile(self.filename, .{ .mode = .write_only }) catch |err| {

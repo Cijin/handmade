@@ -63,7 +63,7 @@ pub fn main() !u8 {
         .recording_file = null,
         .playback_file = null,
         .game_input = arena.allocator().create(common.Input) catch unreachable,
-        .game_memory = game_memory,
+        .game_state = game_memory.game_state,
     };
     GlobalLinuxState.game_input.* = common.Input{
         .type = .Keyboard,
@@ -283,11 +283,11 @@ pub fn main() !u8 {
         assert(time_per_frame != 0);
         fps = @divTrunc(1000, time_per_frame);
 
-        //std.debug.print("MsPerFrame: {d}\t FPS: {d}\t TargetFPS: {d}\n", .{
-        //    time_per_frame,
-        //    fps,
-        //    TargetFPS,
-        //});
+        std.debug.print("MsPerFrame: {d}\t FPS: {d}\t TargetFPS: {d}\n", .{
+            time_per_frame,
+            fps,
+            TargetFPS,
+        });
         start_time = end_time;
     }
 
@@ -382,17 +382,19 @@ fn read_linux_state(linux_state: *common.LinuxState) !void {
         try linux_state.playback_file.?.seekTo(0);
     }
 
-    var buffer: [@sizeOf(common.Input)]u8 = undefined;
+    var buffer: [@sizeOf(common.GameState) + @sizeOf(common.Input)]u8 = undefined;
     _ = linux_state.playback_file.?.read(&buffer) catch |err| {
         std.debug.print("Failed to read input: {any}\n", .{err});
     };
 
-    linux_state.game_input.* = mem.bytesToValue(common.Input, &buffer);
+    linux_state.game_state.* = mem.bytesToValue(common.GameState, buffer[0..@sizeOf(common.GameState)]);
+    linux_state.game_input.* = mem.bytesToValue(common.Input, buffer[@sizeOf(common.GameState)..]);
 }
 
 fn write_linux_state(linux_state: *common.LinuxState) void {
     // Todo: what about over-writing existing recordings
-    _ = linux_state.recording_file.?.write(mem.asBytes(linux_state.game_input)) catch |err| {
+    const buffer = mem.asBytes(linux_state.game_state) ++ mem.asBytes(linux_state.game_input);
+    _ = linux_state.recording_file.?.write(buffer) catch |err| {
         std.debug.print("Failed to write input: {any}\n", .{err});
     };
 }
@@ -420,13 +422,6 @@ fn copyFile(from: []const u8, to: []const u8) !void {
 fn load_game_lib(allocator: mem.Allocator) !dyn_lib {
     var retry_attempt: u8 = 0;
 
-    // Todo:
-    // Maybe keep a second temp file and delete the other one when switching
-    // atomic copies create files if they don't exist
-    // OR
-    // Maybe just delete the temp file before copy
-    // OR
-    // Check how load lib behaves without copy
     const cwd = fs.cwd();
 
     const build_result = try build_lib(allocator, cwd);
@@ -465,7 +460,6 @@ fn build_lib(allocator: mem.Allocator, cwd: fs.Dir) !u8 {
             "build-lib",
             GameCode,
             "-dynamic",
-            "-ODebug",
         },
         .cwd_dir = cwd,
     });
