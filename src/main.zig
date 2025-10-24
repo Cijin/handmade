@@ -50,6 +50,7 @@ pub fn main() !u8 {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
 
+    // Todo: combine with linux state
     const game_memory = arena.allocator().create(common.GameMemory) catch unreachable;
     game_memory.* = common.GameMemory{
         .is_initialized = false,
@@ -59,7 +60,7 @@ pub fn main() !u8 {
 
     var GlobalLinuxState = arena.allocator().create(common.LinuxState) catch unreachable;
     GlobalLinuxState.* = common.LinuxState{
-        .filename = "game_state.hmh",
+        .filename = "playback/game_state.hmh",
         .recording_file = null,
         .playback_file = null,
         .game_input = arena.allocator().create(common.Input) catch unreachable,
@@ -419,6 +420,7 @@ fn copyFile(from: []const u8, to: []const u8) !void {
     SourceModifiedAt = stat.mtime;
 }
 
+// Todo: move lib location (build and temp)
 fn load_game_lib(allocator: mem.Allocator) !dyn_lib {
     var retry_attempt: u8 = 0;
 
