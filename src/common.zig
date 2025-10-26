@@ -53,7 +53,6 @@ pub const LinuxState = struct {
 
     pub fn init(self: *LinuxState) !void {
         self.recording_file = fs.cwd().openFile(self.filename, .{ .mode = .write_only }) catch |err| {
-            // Todo: this can be done better
             if (err == fs.File.OpenError.FileNotFound) {
                 self.recording_file = try fs.cwd().createFile(self.filename, .{});
                 self.playback_file = try fs.cwd().openFile(self.filename, .{ .mode = .read_only });
@@ -85,10 +84,13 @@ pub const SoundBuffer = struct {
     }
 };
 
+pub const InitialWindowWidth = 960;
+pub const InitialWindowHeight = 480;
 pub const OffScreenBuffer = struct {
     window_width: u32,
     window_height: u32,
-    memory: []u32,
+    // Todo: this might not work on resize
+    memory: [InitialWindowWidth][InitialWindowHeight]u32,
     pitch: usize,
 
     pub fn get_memory_size(self: *OffScreenBuffer) usize {

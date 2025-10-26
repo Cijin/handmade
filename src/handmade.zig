@@ -53,18 +53,13 @@ fn handle_keypress_event(game_state: *common.GameState, input: *common.Input) vo
     }
 }
 
-// Todo: strange gaps in the buffer, needs fixing
-// Todo: change this to a 2d array | Pass mem.asBytes to X11
 fn renderer(game_state: *common.GameState, buffer: *common.OffScreenBuffer) void {
-    var pixel_idx: usize = 0;
-    for (0..buffer.window_width) |x| {
-        for (0..buffer.window_height) |y| {
-            pixel_idx = (x * buffer.window_height) + y;
+    for (0..buffer.window_width) |i| {
+        for (0..buffer.window_height) |j| {
+            const blue = j + game_state.width_offset;
+            const green = i + game_state.height_offset;
 
-            const blue = y + RedOffset + game_state.width_offset;
-            const green = x + BlueOffset + game_state.height_offset;
-
-            buffer.memory[pixel_idx] = @intCast((green << 8) | blue);
+            buffer.memory[i][j] = @intCast(blue & green);
         }
     }
 }

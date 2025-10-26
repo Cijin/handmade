@@ -26,15 +26,13 @@ const GameUpdateAndRendererFn = *fn (
 var SourceModifiedAt: i128 = 0;
 const MaxRetryAttempt = 10;
 const GameCode = "src/handmade.zig";
-const SourceSo = "libhandmade.so";
-const TempSo = "temp_handmade.so";
+const SourceSo = "game_source/libhandmade.so";
+const TempSo = "game_source/temp_handmade.so";
 const KiB = 1024;
 const MB = KiB * 1024;
 const GB = MB * 1024;
 const BitmapPad = 32;
 const TransientStorageSize = 1 * GB;
-const InitialWindowHeight = 480;
-const InitialWindowWidth = 600;
 // Todo: Get monitor refresh rate
 // Todo: Get current monitor
 const TargetFPS = 30;
@@ -85,10 +83,9 @@ pub fn main() !u8 {
     GlobalSoundBuffer.fade_duration_ms = 20;
     GlobalSoundBuffer.buffer = arena.allocator().alloc(i16, GlobalSoundBuffer.get_buffer_size(TargetFPS)) catch unreachable;
 
-    GlobalOffScreenBuffer.window_width = InitialWindowWidth;
-    GlobalOffScreenBuffer.window_height = InitialWindowHeight;
+    GlobalOffScreenBuffer.window_width = common.InitialWindowWidth;
+    GlobalOffScreenBuffer.window_height = common.InitialWindowHeight;
     GlobalOffScreenBuffer.pitch = 0;
-    GlobalOffScreenBuffer.memory = arena.allocator().alloc(u32, GlobalOffScreenBuffer.get_memory_size()) catch unreachable;
 
     var sample_spec = c.struct_pa_sample_spec{
         .format = c.PA_SAMPLE_S16LE,
@@ -241,7 +238,8 @@ pub fn main() !u8 {
                     }
                 },
                 c.ConfigureNotify => {
-                    // Todo: run window in full screen and disallow resize
+                    // Todo: currently window width and height is fixed, can be "streched" once
+                    // prototyping is done
                 },
                 else => continue,
             }
@@ -296,37 +294,6 @@ pub fn main() !u8 {
     return 0;
 }
 
-fn platform_read_entire_file(allocator: mem.Allocator) !fs.File {
-    const pwd = fs.cwd();
-    const file = try pwd.createFile("test", .{ .lock = .exclusive, .read = true });
-    defer file.close();
-
-    const file_stat = try file.stat();
-    const file_size = file_stat.size;
-
-    const written = try file.write("this is some test to verify file write");
-
-    // Todo: i'm not sure this is the right way to reset the file handle
-    try file.seekTo(0);
-    const seek_pos = try file.getPos();
-
-    const dest: []u8 = try allocator.alloc(u8, file_size);
-    const bytes_read = file.read(dest) catch |err| {
-        allocator.free(dest);
-        return err;
-    };
-
-    std.debug.print("File stats: SeekPos: {d} | Size:{d}| Read: {d}| Written: {d}| Contents:\n {s}\n", .{
-        seek_pos,
-        file_size,
-        bytes_read,
-        written,
-        dest,
-    });
-
-    return file;
-}
-
 fn write_audio(server: ?*c.struct_pa_simple, sound_buffer: *common.SoundBuffer) void {
     var error_code: c_int = 0;
     const result = c.pa_simple_write(
@@ -364,18 +331,17 @@ fn render_game(
         @intCast(wa.depth),
         c.ZPixmap,
         0,
-        @ptrCast(screen_buffer.memory),
+        @ptrCast(&screen_buffer.memory),
         @intCast(screen_buffer.window_width),
         @intCast(screen_buffer.window_height),
         BitmapPad,
-        @intCast(screen_buffer.window_width * @sizeOf(u32)),
+        0,
     );
 
     _ = c.XPutImage(display, window, gc, image, 0, 0, 0, 0, @intCast(screen_buffer.window_width), @intCast(screen_buffer.window_height));
 }
 
 fn read_linux_state(linux_state: *common.LinuxState) !void {
-    // Todo: can stop playback if reached EOF
     const current_pos = try linux_state.playback_file.?.getPos();
     const stat = try linux_state.playback_file.?.stat();
 
@@ -393,7 +359,6 @@ fn read_linux_state(linux_state: *common.LinuxState) !void {
 }
 
 fn write_linux_state(linux_state: *common.LinuxState) void {
-    // Todo: what about over-writing existing recordings
     const buffer = mem.asBytes(linux_state.game_state) ++ mem.asBytes(linux_state.game_input);
     _ = linux_state.recording_file.?.write(buffer) catch |err| {
         std.debug.print("Failed to write input: {any}\n", .{err});
@@ -420,13 +385,16 @@ fn copyFile(from: []const u8, to: []const u8) !void {
     SourceModifiedAt = stat.mtime;
 }
 
-// Todo: move lib location (build and temp)
 fn load_game_lib(allocator: mem.Allocator) !dyn_lib {
     var retry_attempt: u8 = 0;
 
     const cwd = fs.cwd();
 
-    const build_result = try build_lib(allocator, cwd);
+    const build_result = build_lib(allocator, cwd) catch |err| {
+        std.debug.print("{any}\n", .{err});
+        return err;
+    };
+
     if (build_result != 0) {
         return error.Error;
     }
@@ -462,6 +430,8 @@ fn build_lib(allocator: mem.Allocator, cwd: fs.Dir) !u8 {
             "build-lib",
             GameCode,
             "-dynamic",
+            // Todo: use some sort of sprintf
+            "--femit-bin=game_source/libhandmade.so",
         },
         .cwd_dir = cwd,
     });
