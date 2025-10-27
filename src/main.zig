@@ -35,7 +35,7 @@ const BitmapPad = 32;
 const TransientStorageSize = 1 * GB;
 // Todo: Get monitor refresh rate
 // Todo: Get current monitor
-const TargetFPS = 30;
+const TargetFPS = 60;
 const TargetMsPerFrame = 1000 / TargetFPS;
 
 pub fn main() !u8 {
@@ -45,6 +45,12 @@ pub fn main() !u8 {
     var GlobalSoundBuffer: common.SoundBuffer = undefined;
     var GlobalOffScreenBuffer: common.OffScreenBuffer = undefined;
 
+    // Todo: this could be done better?
+    // total_mem = [ game_state audio_buffer screen_buffer]
+    // allocate(total_mem)
+    // game_state = total_mem[0..@sizeOf(game_state)]
+    // game_state.audio -> total_mem[@sizeOf(game_state)..@sizeOf(audio_buffer)]
+    // audio_buffer = total_mem[0..@sizeOf(audio_buffer)]
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
 
@@ -161,6 +167,7 @@ pub fn main() !u8 {
     _ = c.XStoreName(display, window, "Handmade");
 
     // you will not get events without this
+    // Todo: mouse ButtonPress, ButtonRelease, PointerMotion,
     _ = c.XSelectInput(display, window, c.KeyPressMask | c.KeyReleaseMask | c.StructureNotifyMask);
 
     _ = c.XMapWindow(display, window);
@@ -168,7 +175,8 @@ pub fn main() !u8 {
     // window will not show up without sync
     _ = c.XSync(display, 0);
 
-    var game_lib = load_game_lib(arena.allocator()) catch {
+    var game_lib = load_game_lib(arena.allocator()) catch |err| {
+        std.debug.print("{any}\n", .{err});
         std.debug.print("Exiting\n", .{});
         return 1;
     };
@@ -294,6 +302,7 @@ pub fn main() !u8 {
     return 0;
 }
 
+// Todo: this won't work for higher fps
 fn write_audio(server: ?*c.struct_pa_simple, sound_buffer: *common.SoundBuffer) void {
     var error_code: c_int = 0;
     const result = c.pa_simple_write(
@@ -341,6 +350,7 @@ fn render_game(
     _ = c.XPutImage(display, window, gc, image, 0, 0, 0, 0, @intCast(screen_buffer.window_width), @intCast(screen_buffer.window_height));
 }
 
+// Todo: read entire file at once
 fn read_linux_state(linux_state: *common.LinuxState) !void {
     const current_pos = try linux_state.playback_file.?.getPos();
     const stat = try linux_state.playback_file.?.stat();
@@ -358,6 +368,7 @@ fn read_linux_state(linux_state: *common.LinuxState) !void {
     linux_state.game_input.* = mem.bytesToValue(common.Input, buffer[@sizeOf(common.GameState)..]);
 }
 
+// Todo: write larger chunks of inputs at once instead of one at a time
 fn write_linux_state(linux_state: *common.LinuxState) void {
     const buffer = mem.asBytes(linux_state.game_state) ++ mem.asBytes(linux_state.game_input);
     _ = linux_state.recording_file.?.write(buffer) catch |err| {
@@ -431,7 +442,7 @@ fn build_lib(allocator: mem.Allocator, cwd: fs.Dir) !u8 {
             GameCode,
             "-dynamic",
             // Todo: use some sort of sprintf
-            "--femit-bin=game_source/libhandmade.so",
+            "-femit-bin=game_source/libhandmade.so",
         },
         .cwd_dir = cwd,
     });
