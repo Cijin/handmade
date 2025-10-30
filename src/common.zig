@@ -31,13 +31,10 @@ pub const GameState = struct {
     player_y: u32,
 };
 
-pub const InputType = enum {
-    Keyboard,
-    Gamepad,
-};
-
 pub const Input = struct {
-    type: InputType = .Keyboard,
+    // Todo: mouse button
+    mouse_x: i32,
+    mouse_y: i32,
     key: u32,
     key_released: u32,
     time: u32,
@@ -96,4 +93,9 @@ pub const OffScreenBuffer = struct {
     pub fn get_memory_size(self: *OffScreenBuffer) usize {
         return self.window_width * self.window_height;
     }
+};
+
+const ThreadContext = struct {
+    // identifier for the current thread
+    handle: u32,
 };

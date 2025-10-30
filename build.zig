@@ -35,6 +35,7 @@ pub fn build(b: *std.Build) void {
 
     // Todo: static linking?
     exe.root_module.linkSystemLibrary("X11", .{ .needed = true });
+    exe.root_module.linkSystemLibrary("Xrandr", .{ .needed = true });
     // Todo: dynamic linking?
     exe.root_module.linkSystemLibrary("pulse-simple", .{ .weak = true });
     exe.root_module.link_libc = true;

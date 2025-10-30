@@ -9,8 +9,11 @@ const time = std.time;
 const math = std.math;
 const assert = std.debug.assert;
 const c = @cImport({
+    // https://tronche.com/gui/x/xlib/
     @cInclude("X11/Xlib.h");
     @cInclude("X11/keysym.h");
+    // https://www.x.org/archive/X11R7.6/doc/man/man3/Xrandr.3.xhtml
+    @cInclude("X11/extensions/Xrandr.h");
     // Todo: check static linking options
     @cInclude("pulse/simple.h");
     @cInclude("pulse/error.h");
@@ -33,12 +36,10 @@ const MB = KiB * 1024;
 const GB = MB * 1024;
 const BitmapPad = 32;
 const TransientStorageSize = 1 * GB;
-// Todo: Get monitor refresh rate
-// Todo: Get current monitor
-const TargetFPS = 60;
-const TargetMsPerFrame = 1000 / TargetFPS;
 
 pub fn main() !u8 {
+    var X11RefreshRate: u32 = 60;
+    var X11MsPerFrame = 1000 / X11RefreshRate;
     var run_playback: bool = false;
     var is_recording: bool = false;
 
@@ -71,7 +72,8 @@ pub fn main() !u8 {
         .game_state = game_memory.game_state,
     };
     GlobalLinuxState.game_input.* = common.Input{
-        .type = .Keyboard,
+        .mouse_x = -1,
+        .mouse_y = -1,
         .key = 0,
         .key_released = 0,
         .time = 0,
@@ -87,7 +89,7 @@ pub fn main() !u8 {
     GlobalSoundBuffer.tone_volume = 0;
     GlobalSoundBuffer.channels = 2;
     GlobalSoundBuffer.fade_duration_ms = 20;
-    GlobalSoundBuffer.buffer = arena.allocator().alloc(i16, GlobalSoundBuffer.get_buffer_size(TargetFPS)) catch unreachable;
+    GlobalSoundBuffer.buffer = arena.allocator().alloc(i16, GlobalSoundBuffer.get_buffer_size(@floatFromInt(X11RefreshRate))) catch unreachable;
 
     GlobalOffScreenBuffer.window_width = common.InitialWindowWidth;
     GlobalOffScreenBuffer.window_height = common.InitialWindowHeight;
@@ -102,7 +104,7 @@ pub fn main() !u8 {
         .maxlength = math.maxInt(u32) - 1,
         .tlength = math.maxInt(u32) - 1,
         .prebuf = math.maxInt(u32) - 1,
-        .minreq = @intCast(GlobalSoundBuffer.get_buffer_size(TargetFPS)),
+        .minreq = @intCast(GlobalSoundBuffer.get_buffer_size(@floatFromInt(X11RefreshRate))),
     };
     const audio_server = c.pa_simple_new(
         null,
@@ -124,12 +126,13 @@ pub fn main() !u8 {
         c.pa_simple_free(audio_server);
     }
 
-    var audio_pool: thread.Pool = undefined;
-    audio_pool.init(.{ .allocator = arena.allocator() }) catch |err| {
+    // Todo: get thread spawn count?
+    var audio_thread_pool: thread.Pool = undefined;
+    audio_thread_pool.init(.{ .allocator = arena.allocator() }) catch |err| {
         std.debug.print("Failed to initialize thread pool: {any}\n", .{err});
         return 1;
     };
-    defer audio_pool.deinit();
+    defer audio_thread_pool.deinit();
 
     // On a POSIX-conformant system, if the display_name is NULL, it defaults to the value of the DISPLAY environment variable.
     const display = c.XOpenDisplay(null) orelse {
@@ -154,6 +157,13 @@ pub fn main() !u8 {
         c.XBlackPixel(display, screen),
     );
 
+    const XRRScreenConf = c.XRRGetScreenInfo(display, window);
+    const XRRCurrentRate = c.XRRConfigCurrentRate(XRRScreenConf);
+    if (XRRCurrentRate > 0) {
+        X11RefreshRate = @intCast(XRRCurrentRate);
+        X11MsPerFrame = 1000 / X11RefreshRate;
+    }
+
     const gc = c.XCreateGC(display, window, 0, null);
 
     var delete_atom: c.Atom = undefined;
@@ -166,9 +176,12 @@ pub fn main() !u8 {
 
     _ = c.XStoreName(display, window, "Handmade");
 
-    // you will not get events without this
-    // Todo: mouse ButtonPress, ButtonRelease, PointerMotion,
-    _ = c.XSelectInput(display, window, c.KeyPressMask | c.KeyReleaseMask | c.StructureNotifyMask);
+    // events don't get triggered without masks
+    _ = c.XSelectInput(
+        display,
+        window,
+        c.KeyPressMask | c.KeyReleaseMask | c.StructureNotifyMask | c.PointerMotionMask | c.ButtonPressMask | c.ButtonReleaseMask,
+    );
 
     _ = c.XMapWindow(display, window);
 
@@ -236,6 +249,17 @@ pub fn main() !u8 {
                     GlobalLinuxState.game_input.key = 0;
                     GlobalLinuxState.game_input.time = @intCast(event.xkey.time);
                 },
+                c.ButtonRelease => {
+                    std.debug.print("button release: {d}\n", .{event.xbutton.button});
+                },
+                c.ButtonPress => {
+                    std.debug.print("button press: {d}\n", .{event.xbutton.button});
+                },
+                c.MotionNotify => {
+                    GlobalLinuxState.game_input.mouse_x = @intCast(event.xmotion.x);
+                    GlobalLinuxState.game_input.mouse_y = @intCast(event.xmotion.y);
+                    std.debug.print("mouse x:{d} | mouse y: {d}\n", .{ event.xmotion.x, event.xmotion.y });
+                },
                 // Todo: handle window destroyed or prematurely closed
                 // so that it can be restarted if it was unintended
                 c.ClientMessage => {
@@ -266,8 +290,8 @@ pub fn main() !u8 {
         // Todo: RDTSC() to get cycles/frame
         end_time = time.milliTimestamp();
         time_per_frame = end_time - start_time;
-        while (time_per_frame < TargetMsPerFrame) {
-            const sleep_time: u64 = @intCast(@divTrunc((TargetMsPerFrame - time_per_frame), 1000));
+        while (time_per_frame < X11MsPerFrame) {
+            const sleep_time: u64 = @intCast(@divTrunc((X11MsPerFrame - time_per_frame), 1000));
             thread.sleep(sleep_time);
 
             end_time = time.milliTimestamp();
@@ -277,7 +301,7 @@ pub fn main() !u8 {
         render_game(
             &GlobalOffScreenBuffer,
             &GlobalSoundBuffer,
-            &audio_pool,
+            &audio_thread_pool,
             audio_server,
             display,
             window,
@@ -290,11 +314,11 @@ pub fn main() !u8 {
         assert(time_per_frame != 0);
         fps = @divTrunc(1000, time_per_frame);
 
-        std.debug.print("MsPerFrame: {d}\t FPS: {d}\t TargetFPS: {d}\n", .{
-            time_per_frame,
-            fps,
-            TargetFPS,
-        });
+        //std.debug.print("MsPerFrame: {d}\t FPS: {d}\t TargetFPS: {d}\n", .{
+        //    time_per_frame,
+        //    fps,
+        //    X11RefreshRate,
+        //});
         start_time = end_time;
     }
 
@@ -320,7 +344,7 @@ fn write_audio(server: ?*c.struct_pa_simple, sound_buffer: *common.SoundBuffer) 
 fn render_game(
     screen_buffer: *common.OffScreenBuffer,
     sound_buffer: *common.SoundBuffer,
-    audio_pool: *thread.Pool,
+    audio_thread_pool: *thread.Pool,
     audio_server: ?*c.struct_pa_simple,
     display: ?*c.Display,
     window: c.Window,
@@ -329,7 +353,7 @@ fn render_game(
     var wa: c.XWindowAttributes = undefined;
     _ = c.XGetWindowAttributes(display, window, &wa);
 
-    audio_pool.spawn(write_audio, .{ audio_server, sound_buffer }) catch |err| {
+    audio_thread_pool.spawn(write_audio, .{ audio_server, sound_buffer }) catch |err| {
         std.debug.print("Failed to spawn audio thread: {any}\n", .{err});
         return;
     };
@@ -424,6 +448,7 @@ fn load_game_lib(allocator: mem.Allocator) !dyn_lib {
             std.debug.print("Failed to load handmade lib: {any}\n", .{err});
             lib_err = err;
 
+            // Todo: this might no longer be needed or exponential retry
             thread.sleep(1000000000);
             continue;
         };

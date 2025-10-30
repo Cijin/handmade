@@ -27,29 +27,24 @@ fn fill_sound_buffer(game_state: *common.GameState, sound_buffer: *common.SoundB
 }
 
 fn handle_keypress_event(game_state: *common.GameState, input: *common.Input) void {
-    switch (input.type) {
-        .Keyboard => {
-            switch (input.key) {
-                'w' => {
-                    game_state.tone_hz = 82;
-                    game_state.height_offset -= 1;
-                },
-                'a' => {
-                    game_state.tone_hz = 440;
-                    game_state.width_offset -= 1;
-                },
-                's' => {
-                    game_state.tone_hz = 880;
-                    game_state.height_offset += 1;
-                },
-                'd' => {
-                    game_state.tone_hz = 294;
-                    game_state.width_offset += 1;
-                },
-                else => {},
-            }
+    switch (input.key) {
+        'w' => {
+            game_state.tone_hz = 82;
+            game_state.height_offset -= 1;
         },
-        .Gamepad => unreachable,
+        'a' => {
+            game_state.tone_hz = 440;
+            game_state.width_offset -= 1;
+        },
+        's' => {
+            game_state.tone_hz = 880;
+            game_state.height_offset += 1;
+        },
+        'd' => {
+            game_state.tone_hz = 294;
+            game_state.width_offset += 1;
+        },
+        else => {},
     }
 }
 
